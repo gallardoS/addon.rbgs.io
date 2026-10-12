@@ -8,7 +8,7 @@ jobs:
       - name: Install Lua 5.1 parser
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Parse all addon Lua files
-        run: find RBGSCompatibility -name '*.lua' -exec luac5.1 -p {} \;
+        run: find RBGS RBGSCompatibility -name '*.lua' -exec luac5.1 -p {} \;
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -16,3 +16,5 @@ jobs:
         run: python -m pip install -r tools/requirements-test.txt
       - name: Test diagnostic capture and minimap panel
         run: python -m unittest discover -s tools -p test_probe_panel.py
+      - name: Test product capture and history
+        run: python -m unittest discover -s tools -p test_product_capture.py

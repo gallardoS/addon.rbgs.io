@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: rbgs.io
+## IconTexture: Interface\AddOns\RBGS\Media\logo
+## Notes: Assigned capture storage. Controlled Darkspear test profile; no uploads or rating.
+## Author: rbgs.io
+## Version: 0.1.0-test
+## SavedVariables: RBGSMatchData
+## SavedVariablesPerCharacter: RBGSSettings
+
+CaptureStore.lua
+ForeverAdapter.lua
+RBGS.lua
+Panel.lua
