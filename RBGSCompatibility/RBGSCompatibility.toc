@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: rbgs.io Debugger
+## IconTexture: Interface\AddOns\RBGSCompatibility\Media\logo
+## Notes: Diagnostic capture for the official Forever beta; verify Interface for each tested build.
+## SavedVariables: RBGSCompatibilityData
+## SavedVariablesPerCharacter: RBGSDebuggerSettings
+
+RBGSCompatibility.lua
+ProbePanel.lua

@@ -1,0 +1,18 @@
+name: Verify addons
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.1 parser
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - name: Parse all addon Lua files
+        run: find RBGSCompatibility -name '*.lua' -exec luac5.1 -p {} \;
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test runtime
+        run: python -m pip install -r tools/requirements-test.txt
+      - name: Test diagnostic capture and minimap panel
+        run: python -m unittest discover -s tools -p test_probe_panel.py
