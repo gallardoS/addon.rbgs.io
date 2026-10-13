@@ -57,26 +57,44 @@ local function emit(message)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("RBGS probe: " .. message) end
 end
 
-local function append(kind, payload)
-    RBGSCompatibilityData = RBGSCompatibilityData or { schema = 1, records = {} }
-    local records = RBGSCompatibilityData.records
-    records[#records + 1] = { at = now(), kind = kind, payload = payload }
-    if #records > MAX_RECORDS then table.remove(records, 1) end
-    if probe.Refresh then probe.Refresh() end
+local panelFailureReported = false
+local function refreshPanel()
+    if type(probe.Refresh) ~= "function" then return end
+    local ok = pcall(probe.Refresh)
+    if not ok and not panelFailureReported then
+        emit("panel refresh failed; diagnostic records retained. Try Refresh view.")
+    end
+    panelFailureReported = not ok
 end
 
-local function captureIdentity()
+local function appendRecords(batch)
+    RBGSCompatibilityData = RBGSCompatibilityData or { schema = 1, records = {} }
+    local records = RBGSCompatibilityData.records
+    local timestamp = now()
+    for _, record in ipairs(batch) do
+        records[#records + 1] = { at = timestamp, kind = record.kind, payload = record.payload }
+    end
+    while #records > MAX_RECORDS do table.remove(records, 1) end
+    -- Rendering must not interrupt capture or expose a partially appended snapshot.
+    refreshPanel()
+end
+
+local function append(kind, payload)
+    appendRecords({ { kind = kind, payload = payload } })
+end
+
+local function readIdentity()
     local name, nameError = safeCall(UnitName, "player")
     local guid, guidError = safeCall(UnitGUID, "player")
     local realm, realmError = safeCall(GetRealmName)
-    append("identity", {
+    return {
         name = values(name), nameError = nameError,
         guid = values(guid), guidError = guidError,
         realm = values(realm), realmError = realmError,
-    })
+    }
 end
 
-local function captureRoster()
+local function readRoster()
     local rows = {}
     local raidCount = safeCall(GetNumGroupMembers)
     local partyCount = safeCall(GetNumSubgroupMembers)
@@ -88,7 +106,7 @@ local function captureRoster()
         local unit = prefix .. index
         rows[#rows + 1] = { unit = unit, name = values(safeCall(UnitName, unit)), guid = values(safeCall(UnitGUID, unit)) }
     end
-    append("group_roster", { reportedCount = count, unitPrefix = prefix, rows = rows })
+    return { reportedCount = count, unitPrefix = prefix, rows = rows }
 end
 
 local function readScoreboard()
@@ -107,14 +125,10 @@ local function readScoreboard()
     }
 end
 
-local function captureScoreboard()
-    append("scoreboard", readScoreboard())
-end
-
-local function captureEnvironment()
+local function readEnvironment()
     local build, buildError = safeCall(GetBuildInfo)
     local map, mapError = safeCall(GetInstanceInfo)
-    append("environment", { build = values(build, 8), buildError = buildError, instance = values(map, 16), instanceError = mapError })
+    return { build = values(build, 8), buildError = buildError, instance = values(map, 16), instanceError = mapError }
 end
 
 local function captureCapabilities()
@@ -136,8 +150,13 @@ probe.Printable = printable
 probe.MaxRecords = MAX_RECORDS
 probe.CaptureCapabilities = captureCapabilities
 probe.CaptureSnapshot = function(phase)
-    captureEnvironment(); captureIdentity(); captureRoster(); captureScoreboard()
-    append("capture_marker", { phase = phase or "Manual" })
+    appendRecords({
+        { kind = "environment", payload = readEnvironment() },
+        { kind = "identity", payload = readIdentity() },
+        { kind = "group_roster", payload = readRoster() },
+        { kind = "scoreboard", payload = readScoreboard() },
+        { kind = "capture_marker", payload = { phase = phase or "Manual" } },
+    })
     emit("snapshot captured; use Save / reload to flush SavedVariables")
 end
 probe.LatestRecords = function()
@@ -199,9 +218,11 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         retryElapsed = 0
         local score = readScoreboard()
         if resultAvailable(score) or finalElapsed >= FINAL_RETRY_WINDOW then
-            append("scoreboard", score)
-            append("capture_marker", { phase = resultAvailable(score)
-                and "Automatic final result ready" or "Automatic final result unavailable" })
+            appendRecords({
+                { kind = "scoreboard", payload = score },
+                { kind = "capture_marker", payload = { phase = resultAvailable(score)
+                    and "Automatic final result ready" or "Automatic final result unavailable" } },
+            })
             finalPending = false
             emit("final observation captured; use Save / reload before leaving")
         end
@@ -230,8 +251,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         emit("loaded; click the rbgs button to open the capture panel")
     elseif event == "PLAYER_LOGIN" then
         captureCapabilities()
-        captureEnvironment()
-        captureIdentity()
+        append("environment", readEnvironment())
+        append("identity", readIdentity())
         updateContext()
         if probe.ShowPanel then probe.ShowPanel() end
     else

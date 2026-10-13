@@ -87,7 +87,8 @@ function CreateFrame(kind, name, parent)
     UIFrames[#UIFrames + 1] = item
     return item
 end
-DEFAULT_CHAT_FRAME = {AddMessage=function() end}
+FixtureMessages = {}
+DEFAULT_CHAT_FRAME = {AddMessage=function(_, message) FixtureMessages[#FixtureMessages + 1]=message end}
 function GetServerTime() return 100 end
 function GetBuildInfo() return "1.60.1", "70291", "fixture-date", 16001 end
 function GetInstanceInfo() return "Darkspear Islands", FixtureInstanceType or "none" end
@@ -218,6 +219,58 @@ class ProbePanelTests(unittest.TestCase):
         self.lua.execute('SlashCmdList.RBGSPROBE("capture")')
         latest, _ = self.namespace.LatestRecords()
         self.assertEqual(latest.capture_marker.payload.phase, "Manual")
+
+    def test_panel_failure_does_not_interrupt_manual_or_periodic_capture(self):
+        original_refresh = self.namespace.Refresh
+        self.namespace.Refresh = self.lua.eval('function() error("private fixture error") end')
+        self.lua.execute('SlashCmdList.RBGSPROBE("capture")')
+        latest, _ = self.namespace.LatestRecords()
+        self.assertEqual(latest.capture_marker.payload.phase, "Manual")
+        self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); tick(300)')
+        latest, count = self.namespace.LatestRecords()
+        self.assertEqual(latest.capture_marker.payload.phase, "Automatic 5-minute capture")
+        self.lua.execute('tick(300)')
+        self.assertEqual(self.namespace.LatestRecords()[1], count + 5)
+        messages = list(self.lua.globals().FixtureMessages.values())
+        self.assertEqual(sum("panel refresh failed" in message for message in messages), 1)
+        self.assertFalse(any("private fixture error" in message for message in messages))
+        self.namespace.Refresh = original_refresh
+        self.namespace.CaptureSnapshot("Manual")
+        self.assertIn("Latest capture: Manual", self.lua.globals().visibleText())
+        self.namespace.Refresh = self.lua.eval('function() error("private fixture error") end')
+        self.namespace.CaptureSnapshot("Manual")
+        self.assertEqual(sum("panel refresh failed" in message
+                             for message in self.lua.globals().FixtureMessages.values()), 2)
+
+    def test_panel_failure_does_not_interrupt_final_retry_or_next_game(self):
+        self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD")')
+        self.namespace.Refresh = self.lua.eval('function() error("fixture panel failure") end')
+        self.lua.execute('fire("PVP_MATCH_COMPLETE"); FixtureScoreCount=30; FixtureWinner=0; tick(2)')
+        latest, count = self.namespace.LatestRecords()
+        self.assertEqual(latest.capture_marker.payload.phase, "Automatic final result ready")
+        self.assertEqual(latest.scoreboard.payload.winner[1], "0")
+        self.lua.execute('tick(600)')
+        self.assertEqual(self.namespace.LatestRecords()[1], count)
+        self.lua.execute('FixtureInstanceType="none"; fire("ZONE_CHANGED_NEW_AREA"); '
+                         'FixtureWinner=nil; FixtureScoreCount=0; FixtureInstanceType="pvp"; '
+                         'fire("PLAYER_ENTERING_WORLD"); tick(300)')
+        self.assertEqual(self.namespace.LatestRecords()[0].capture_marker.payload.phase,
+                         "Automatic 5-minute capture")
+
+    def test_panel_observes_complete_snapshot_at_capacity(self):
+        for _ in range(60):
+            self.namespace.CaptureSnapshot("Before BG")
+        self.namespace.Refresh = self.lua.eval('''function()
+            local records=RBGSCompatibilityData.records
+            assert(#records == 300)
+            local expected={"environment", "identity", "group_roster", "scoreboard", "capture_marker"}
+            for index, kind in ipairs(expected) do
+                assert(records[#records - 5 + index].kind == kind)
+            end
+            FixtureRefreshes=(FixtureRefreshes or 0) + 1
+        end''')
+        self.namespace.CaptureSnapshot("Manual")
+        self.assertEqual(self.lua.globals().FixtureRefreshes, 1)
 
     def test_capture_serializes_through_the_companion_parser_and_restores(self):
         self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); FixtureScoreCount=1; FixtureWinner=0; fire("PVP_MATCH_COMPLETE")')
