@@ -32,8 +32,14 @@ function Adapter.Identity()
     local name = Adapter.Call(UnitName, "player")
     local realm = Adapter.Call(GetRealmName)
     local guid = Adapter.Call(UnitGUID, "player")
-    if not name or not stringValue(name[1]) then return nil end
-    return {name=stringValue(name[1]), realm=realm and stringValue(realm[1]), guid=guid and stringValue(guid[1])}
+    -- On the tested Forever 70338 client, UnitName returns given name and surname.
+    -- GetRealmName supplies the realm independently; a missing surname stays unknown.
+    local givenName = name and stringValue(name[1])
+    local surname = name and stringValue(name[2])
+    if not givenName or not surname then return nil end
+    local fullName = stringValue(givenName .. " " .. surname)
+    if not fullName then return nil end
+    return {name=fullName, realm=realm and stringValue(realm[1]), guid=guid and stringValue(guid[1])}
 end
 function Adapter.Context()
     local values = Adapter.Call(GetInstanceInfo)

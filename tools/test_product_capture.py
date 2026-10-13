@@ -20,10 +20,10 @@ function GetServerTime() return FixtureNow end
 function GetBuildInfo() return "1.60.1", FixtureBuild or "70338", "fixture", 16001 end
 function date() return "2026-10-11T16:00:00Z" end
 function GetInstanceInfo() return FixtureMapName or "Darkspear Islands", FixtureInstanceType, nil, nil, nil, nil, nil, FixtureMapId or 2997 end
-function UnitName() return FixtureCharacter or "SyntheticHorde" end
+function UnitName() return FixtureCharacter or "SyntheticHorde", FixtureSurname or "FixtureSurname" end
 function GetBattlefieldScore(index)
     if FixtureBadRow then return nil end
-    return index == 1 and "SyntheticHorde-Fixture Realm" or "SyntheticAlliance-Other Realm",
+    return index == 1 and "SyntheticHorde FixtureSurname-Fixture Realm" or "SyntheticAlliance OtherSurname-Other Realm",
         8, FixtureUnknownHK and nil or 63, 2, 100, index == 1 and 0 or 1, "unused", "unused", "unused", 31097, 0
 end
 function command(value) SlashCmdList.RBGS(value) end
@@ -112,6 +112,50 @@ class ProductCaptureTests(unittest.TestCase):
         self.command("status")
         self.assertNotIn("0123456789ABCDEF", "\n".join(self.lua.globals().Messages.values()))
 
+    def test_forever_surname_is_part_of_identity_and_realm_stays_separate(self):
+        self.arm(); self.enter(); self.finish()
+        identity = self.last()["observedCharacter"]
+        self.assertEqual(identity["name"], "SyntheticHorde FixtureSurname")
+        self.assertEqual(identity["realm"], "Fixture Realm")
+        self.assertEqual(identity["name"], self.last()["capture"]["roster"][0]["character"]["name"])
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+
+    def test_surname_change_is_a_character_change_without_relabeling(self):
+        for during_recording in (False, True):
+            with self.subTest(during_recording=during_recording):
+                self.boot(); self.arm()
+                original = self.last()["observedCharacter"]
+                if during_recording:
+                    self.enter()
+                self.lua.execute('FixtureSurname="OtherSurname"')
+                if during_recording:
+                    self.lua.execute('tick(3)')
+                else:
+                    self.enter()
+                self.assertEqual(self.last()["capture"]["incompleteReason"], "CHARACTER_CHANGED")
+                self.assertEqual(self.last()["observedCharacter"], original)
+
+    def test_unknown_or_invalid_surname_cannot_arm_a_partial_identity(self):
+        for surname in ('nil', '""', '{}', 'string.rep("x", 256)'):
+            with self.subTest(surname=surname):
+                self.boot()
+                self.lua.execute('function UnitName() return "SyntheticHorde", ' + surname + ' end')
+                self.arm()
+                self.assertEqual(self.saved()["captures"], {})
+
+    def test_surname_update_preserves_old_terminal_name_and_rejects_old_armed_identity(self):
+        self.arm(); self.enter(); self.finish()
+        old_final = self.saved()
+        old_final["captures"][0]["observedCharacter"]["name"] = "SyntheticHorde"
+        self.boot(old_final)
+        self.assertEqual(self.saved(), old_final)
+        self.boot(); self.arm()
+        old_armed = self.saved()
+        old_armed["captures"][0]["observedCharacter"]["name"] = "SyntheticHorde"
+        self.boot(old_armed)
+        self.assertEqual(self.last()["observedCharacter"]["name"], "SyntheticHorde")
+        self.assertEqual(self.last()["capture"]["incompleteReason"], "CHARACTER_CHANGED")
+
     def test_two_games_keep_separate_frozen_final_captures(self):
         self.arm(); self.enter(); self.finish(1)
         first = self.last()
@@ -165,7 +209,7 @@ class ProductCaptureTests(unittest.TestCase):
         self.assertEqual(self.last()["capture"]["incompleteReason"], "MAP_MISMATCH")
         self.boot(); self.arm(); self.lua.execute('FixtureCharacter="OtherCharacter"'); self.enter()
         self.assertEqual(self.last()["capture"]["incompleteReason"], "CHARACTER_CHANGED")
-        self.assertEqual(self.last()["observedCharacter"]["name"], "SyntheticHorde")
+        self.assertEqual(self.last()["observedCharacter"]["name"], "SyntheticHorde FixtureSurname")
 
     def test_early_exit_and_final_timeout_preserve_capture(self):
         self.arm(); self.enter()
