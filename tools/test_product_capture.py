@@ -67,20 +67,23 @@ class ProductCaptureTests(unittest.TestCase):
     def setUp(self):
         self.boot()
 
-    def boot(self, saved=None):
+    def boot(self, saved=None, settings=None):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute(MOCK_WOW)
         self.lua.execute(API)
-        if saved is not None:
+        if saved is not None or settings is not None:
             def table(value):
                 if isinstance(value, list):
                     return self.lua.table_from([table(item) for item in value])
                 if isinstance(value, dict):
                     return self.lua.table_from({key: table(item) for key, item in value.items()})
                 return value
-            self.lua.globals().RBGSMatchData = table(saved)
+            if saved is not None:
+                self.lua.globals().RBGSMatchData = table(saved)
+            if settings is not None:
+                self.lua.globals().RBGSSettings = table(settings)
         self.app = self.lua.table()
-        for name in ("CaptureStore.lua", "ForeverAdapter.lua", "RBGS.lua", "Panel.lua"):
+        for name in ("CaptureStore.lua", "ForeverAdapter.lua", "RBGS.lua", "Panel.lua", "ScoreboardButton.lua"):
             self.lua.globals().loadProduct((ROOT / "RBGS" / name).read_text(encoding="utf-8"), self.app)
         self.lua.execute('fire("ADDON_LOADED", "RBGS"); fire("PLAYER_LOGIN")')
 
@@ -111,6 +114,197 @@ class ProductCaptureTests(unittest.TestCase):
         self.assertEqual(self.last()["capture"]["stage"], "ARMED")
         self.command("status")
         self.assertNotIn("0123456789ABCDEF", "\n".join(self.lua.globals().Messages.values()))
+
+    def scoreboard(self):
+        self.lua.execute('''PVPMatchResults=CreateFrame("Frame", "PVPMatchResults", UIParent)
+            PVPMatchResults.leaveButton=CreateFrame("Button", "FixtureLeaveMatch", PVPMatchResults)
+            PVPMatchResults.leaveButton:SetSize(168, 20)
+            PVPMatchResults.leaveButton:SetScript("OnClick", function() FixtureLeft=true end)
+            function PVPMatchResults:BeginShow() FixtureBeginShow=(FixtureBeginShow or 0)+1; self:Show() end''')
+
+    def test_scoreboard_button_waits_for_final_data_then_saves_with_user_click(self):
+        self.arm(); self.enter(); self.scoreboard()
+        self.lua.execute('FixtureWinner=1; fire("PVP_MATCH_COMPLETE"); tick(0.5)')
+        button = self.lua.globals().RBGSScoreboardSaveResults
+        self.assertTrue(button.shown)
+        self.assertFalse(button.enabled)
+        self.assertFalse(self.lua.globals().FixtureLeaveMatch.shown)
+        self.lua.execute('click(RBGSScoreboardSaveResults)')
+        self.assertFalse(bool(self.lua.globals().FixtureReloaded))
+        self.lua.execute('FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE"); tick(0.5)')
+        self.assertTrue(button.enabled)
+        self.assertEqual(button.text, "rbgs.io: Save results")
+        self.assertEqual(button.point[1], "CENTER")
+        before = self.saved()
+        self.lua.execute('click(RBGSScoreboardSaveResults)')
+        self.assertTrue(self.lua.globals().FixtureReloaded)
+        self.assertEqual(self.saved(), before)
+        self.assertFalse(button.enabled)
+
+    def test_scoreboard_save_rechecks_combat_and_never_uses_an_old_match(self):
+        self.arm(); self.enter(); self.scoreboard(); self.finish()
+        self.lua.execute('tick(0.5); FixtureCombat=true; click(RBGSScoreboardSaveResults)')
+        self.assertFalse(bool(self.lua.globals().FixtureReloaded))
+        self.lua.execute('FixtureCombat=false; FixtureInstanceType="none"; fire("PLAYER_ENTERING_WORLD"); FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); tick(0.5)')
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+        self.lua.execute('click(RBGSScoreboardSaveResults)')
+        self.assertFalse(bool(self.lua.globals().FixtureReloaded))
+
+    def test_scoreboard_ui_can_load_late_and_missing_ui_keeps_manual_reload(self):
+        self.arm(); self.enter(); self.finish()
+        self.lua.execute('tick(0.5)')
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.scoreboard(); self.lua.execute('tick(0.5)')
+        self.assertTrue(self.lua.globals().RBGSScoreboardSaveResults.enabled)
+        self.lua.execute('PVPMatchResults:Hide(); tick(0.5)')
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+        self.command('reload')
+        self.assertTrue(self.lua.globals().FixtureReloaded)
+
+    def test_scoreboard_classic_fallback_and_reload_do_not_offer_old_results(self):
+        self.arm(); self.enter(); self.finish()
+        self.lua.execute('WorldStateScoreFrame=CreateFrame("Frame", "WorldStateScoreFrame", UIParent); WorldStateScoreFrameLeaveButton=CreateFrame("Button", "WorldStateScoreFrameLeaveButton", WorldStateScoreFrame); tick(0.5)')
+        self.assertTrue(self.lua.globals().RBGSScoreboardSaveResults.enabled)
+        saved = self.saved()
+        self.boot(saved)
+        self.scoreboard()
+        self.lua.execute('FixtureInstanceType="pvp"; FixtureWinner=1; fire("PLAYER_ENTERING_WORLD"); tick(0.5)')
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.assertEqual(self.saved(), saved)
+
+    def saved_scoreboard_reload(self):
+        self.arm(); self.enter(); self.scoreboard(); self.finish()
+        self.lua.execute('RBGSSettings.minimapAngle=42; click(RBGSScoreboardSaveResults)')
+        return self.saved(), data(self.lua.globals().RBGSSettings)
+
+    def reload_world(self):
+        self.lua.execute('FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", false, true); tick(0.5)')
+
+    def test_reload_reopens_scoreboard_once_with_only_the_original_exit(self):
+        saved, settings = self.saved_scoreboard_reload()
+        self.assertNotIn("assignmentCode", settings["reopenResults"])
+        self.boot(saved, settings)
+        self.scoreboard()
+        self.lua.execute('PVPMatchResults:Hide(); function LeaveBattlefield() error("must never leave automatically") end')
+        self.reload_world()
+        self.assertTrue(self.lua.globals().PVPMatchResults.shown)
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.assertEqual(self.lua.globals().FixtureBeginShow, 1)
+        self.assertIsNone(self.lua.globals().RBGSSettings.reopenResults)
+        self.assertEqual(self.lua.globals().RBGSSettings.minimapAngle, 42)
+        self.assertEqual(self.saved(), saved)
+        self.lua.execute('PVPMatchResults:Hide(); tick(2)')
+        self.assertFalse(self.lua.globals().PVPMatchResults.shown)
+        self.lua.execute('PVPMatchResults:Show(); click(FixtureLeaveMatch)')
+        self.assertTrue(self.lua.globals().FixtureLeft)
+
+    def test_native_exit_stays_hidden_when_blizzard_shows_it_again(self):
+        self.arm(); self.enter(); self.scoreboard(); self.finish()
+        self.lua.execute('FixtureLeaveMatch:Show()')
+        self.assertFalse(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertTrue(self.lua.globals().RBGSScoreboardSaveResults.shown)
+        self.lua.execute('PVPMatchResults:Hide()')
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.lua.execute('PVPMatchResults:Show()')
+        self.assertFalse(self.lua.globals().FixtureLeaveMatch.shown)
+
+    def test_unassigned_scoreboard_and_combat_keep_the_original_exit(self):
+        self.scoreboard(); self.lua.execute('tick(0.5)')
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.arm(); self.enter(); self.finish()
+        self.lua.execute('FixtureCombat=true; tick(0.5)')
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+        self.lua.execute('FixtureCombat=false; tick(0.5)')
+        self.assertFalse(self.lua.globals().FixtureLeaveMatch.shown)
+
+    def test_failed_or_silent_reload_restores_exit_and_discards_reopen_intent(self):
+        for failure in ('ReloadUI=function() error("blocked") end', 'ReloadUI=function() end'):
+            with self.subTest(failure=failure):
+                self.boot(); self.arm(); self.enter(); self.scoreboard(); self.finish()
+                self.lua.execute(failure + '; click(RBGSScoreboardSaveResults); tick(11)')
+                self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+                self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+                self.assertIsNone(self.lua.globals().RBGSSettings.reopenResults)
+                self.lua.execute('FixtureLeaveMatch:Show(); tick(1)')
+                self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+
+    def test_reopen_waits_for_scores_and_late_native_ui(self):
+        saved, settings = self.saved_scoreboard_reload()
+        self.boot(saved, settings)
+        self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD", false, true); tick(0.5)')
+        self.assertIsNone(self.lua.globals().FixtureBeginShow)
+        self.scoreboard(); self.lua.execute('PVPMatchResults:Hide(); tick(0.5)')
+        self.assertFalse(self.lua.globals().PVPMatchResults.shown)
+        self.lua.execute('FixtureWinner=1; FixtureScoreCount=2; tick(0.5)')
+        self.assertTrue(self.lua.globals().PVPMatchResults.shown)
+
+    def test_reopen_loads_native_module_and_waits_for_temporarily_unknown_identity(self):
+        saved, settings = self.saved_scoreboard_reload()
+        self.boot(saved, settings)
+        self.lua.execute('''local original=GetInstanceInfo
+            function UIParentLoadAddOn(name)
+                assert(name=="Blizzard_PVPMatch")
+                FixtureModuleLoads=(FixtureModuleLoads or 0)+1
+                PVPMatchResults=CreateFrame("Frame", "PVPMatchResults", UIParent)
+                PVPMatchResults.leaveButton=CreateFrame("Button", "FixtureLeaveMatch", PVPMatchResults)
+                PVPMatchResults:Hide()
+                function PVPMatchResults:BeginShow() FixtureBeginShow=(FixtureBeginShow or 0)+1; self:Show() end
+            end
+            local originalName=UnitName
+            function UnitName() return nil end
+            FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2
+            fire("PLAYER_ENTERING_WORLD", false, true); tick(0.5)
+            UnitName=originalName''')
+        self.assertIsNone(self.lua.globals().PVPMatchResults)
+        self.lua.execute('tick(0.5)')
+        self.assertTrue(self.lua.globals().PVPMatchResults.shown)
+        self.assertEqual(self.lua.globals().FixtureModuleLoads, 1)
+
+    def test_reopen_times_out_without_reopening_on_later_updates(self):
+        saved, settings = self.saved_scoreboard_reload()
+        self.boot(saved, settings); self.scoreboard()
+        self.lua.execute('PVPMatchResults:Hide(); FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD", false, true); tick(16); FixtureWinner=1; FixtureScoreCount=2; tick(1)')
+        self.assertFalse(self.lua.globals().PVPMatchResults.shown)
+        self.assertIsNone(self.lua.globals().RBGSSettings.reopenResults)
+
+    def test_capture_failure_restores_exit_and_ui_failure_never_hides_the_only_control(self):
+        self.arm(); self.enter(); self.scoreboard()
+        self.lua.execute('FixtureWinner=1; fire("PVP_MATCH_COMPLETE"); tick(0.5)')
+        self.assertFalse(self.lua.globals().FixtureLeaveMatch.shown)
+        self.lua.execute('tick(31)')
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+        self.boot(); self.arm(); self.enter(); self.scoreboard()
+        self.lua.execute('FixtureLeaveMatch.Hide=function() error("protected native control") end')
+        self.finish(); self.lua.execute('tick(0.5)')
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+
+    def test_reopen_rejects_login_expiry_wrong_game_identity_and_revision(self):
+        saved, settings = self.saved_scoreboard_reload()
+        cases = {
+            "login": 'FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", true, false)',
+            "missing reload flag": 'FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD")',
+            "outside": 'fire("PLAYER_ENTERING_WORLD", false, true)',
+            "map": 'FixtureMapId=999; FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", false, true)',
+            "winner": 'FixtureInstanceType="pvp"; FixtureWinner=0; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", false, true)',
+            "identity": 'FixtureSurname="SomeoneElse"; FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", false, true)',
+            "expiry": 'FixtureNow=FixtureNow+121; FixtureInstanceType="pvp"; FixtureWinner=1; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD", false, true)',
+        }
+        for label, script in cases.items():
+            with self.subTest(label=label):
+                self.boot(saved, copy.deepcopy(settings)); self.scoreboard()
+                self.lua.execute('PVPMatchResults:Hide(); ' + script + '; tick(1)')
+                self.assertFalse(self.lua.globals().PVPMatchResults.shown)
+                self.assertIsNone(self.lua.globals().RBGSSettings.reopenResults)
+        stale = copy.deepcopy(settings)
+        stale["reopenResults"]["revision"] += 1
+        self.boot(saved, stale); self.scoreboard(); self.lua.execute('PVPMatchResults:Hide()')
+        self.reload_world()
+        self.assertFalse(self.lua.globals().PVPMatchResults.shown)
 
     def test_forever_surname_is_part_of_identity_and_realm_stays_separate(self):
         self.arm(); self.enter(); self.finish()

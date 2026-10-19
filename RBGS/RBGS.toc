@@ -11,3 +11,4 @@ CaptureStore.lua
 ForeverAdapter.lua
 RBGS.lua
 Panel.lua
+ScoreboardButton.lua

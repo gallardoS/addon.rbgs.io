@@ -26,6 +26,10 @@ local function object(kind, name, parent)
     return item
 end
 function methods:SetScript(event, action) self.scripts[event] = action end
+function methods:HookScript(event, action)
+    local previous = self.scripts[event]
+    self.scripts[event] = function(...) if previous then previous(...) end; action(...) end
+end
 function methods:RegisterEvent(event)
     if event == "PLAYER_PVP_MATCH_COMPLETE" then error("Unsupported fixture event") end
     self.events=self.events or {}
@@ -72,7 +76,11 @@ function methods:GetStringHeight()
     return (lines + 1) * 16
 end
 function methods:IsShown() return self.shown end
-function methods:Hide() self.shown=false end
+function methods:Hide()
+    local changed=self.shown
+    self.shown=false
+    if changed and self.scripts.OnHide then self.scripts.OnHide(self) end
+end
 function methods:Show()
     local changed=not self.shown
     self.shown=true

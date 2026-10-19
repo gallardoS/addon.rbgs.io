@@ -3,11 +3,15 @@ local Store, Adapter = app.Store, app.Adapter
 local frame = CreateFrame("Frame", "RBGSCaptureEvents")
 local loaded, loggedIn, context, cleanEntry, freshScores = false, false, nil, false, false
 local pollElapsed, finalElapsed = 0, 0
+local currentCaptureId
 
 function app.Message(message)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("rbgs.io: " .. message) end
 end
-local function refresh() if app.Refresh then app.Refresh() end end
+local function refresh()
+    if app.Refresh then app.Refresh() end
+    if app.RefreshResultsButton then pcall(app.RefreshResultsButton) end
+end
 local function changed(oldStage)
     local active = app.store and app.store:Active()
     if oldStage and not active then
@@ -21,6 +25,7 @@ local function updateContext()
     if inBG == nil then return end
     local wasBG = context
     context = inBG
+    if inBG ~= true or wasBG ~= true then currentCaptureId = nil end
     local record = app.store:Active()
     if not record then return end
     local stage = record.capture.stage
@@ -30,6 +35,8 @@ local function updateContext()
             cleanEntry = wasBG == false and readable and winner == nil
             freshScores, finalElapsed = false, 0
             app.store:Enter(Adapter.Identity(), map, Adapter.Time(), cleanEntry)
+            local entered = app.store:Active()
+            if entered and entered.capture.stage == "RECORDING" then currentCaptureId = entered.captureId end
             Adapter.Request()
         else
             app.store:Observe(Adapter.Identity(), map, nil, Adapter.Time())
@@ -130,13 +137,46 @@ function app.Status()
 end
 function app.Reload()
     local combat = Adapter.Call(InCombatLockdown)
-    if not combat then app.Message("Combat state unavailable. Use /reload manually when safe."); return end
-    if combat and combat[1] then app.Message("Leave combat before reloading."); return end
+    if not combat then app.Message("Combat state unavailable. Use /reload manually when safe."); return false end
+    if combat and combat[1] then app.Message("Leave combat before reloading."); return false end
     local active = app.store and app.store:Active()
     if active and active.capture.stage ~= "ARMED" then
-        app.Message("Reload interrupts this attempt. It will restore as INCOMPLETE; use /reload manually only if necessary."); return
+        app.Message("Reload interrupts this attempt. It will restore as INCOMPLETE; use /reload manually only if necessary."); return false
     end
-    if not Adapter.Call(ReloadUI) then app.Message("Reload unavailable. Use /reload or log out to save.") end
+    if app.PrepareResultsReload then pcall(app.PrepareResultsReload) end
+    if not Adapter.Call(ReloadUI) then
+        if app.ResultsReloadFailed then pcall(app.ResultsReloadFailed) end
+        app.Message("Reload unavailable. Use /reload or log out to save."); return false
+    end
+    return true
+end
+function app.ResultSaveState()
+    if not currentCaptureId or not app.store or app.store.error then return false, false end
+    local inBG, map = Adapter.Context()
+    local winner, readable = Adapter.Winner()
+    if inBG ~= true or not map or map.gameMapId ~= 2997 or not readable or (winner ~= 0 and winner ~= 1) then return false, false end
+    for _, record in ipairs(app.store.root.captures) do
+        if record.captureId == currentCaptureId then
+            if record.capture.stage == "FINAL_PENDING" or record.capture.stage == "RECORDING" then
+                return true, false, "Waiting for the final scoreboard. Keep this window open."
+            end
+            if record.capture.stage ~= "COMPLETE" or record.capture.state ~= "COMPLETE" then
+                return false, false
+            end
+            if not record.capture.map or record.capture.map.gameMapId ~= map.gameMapId
+                or record.capture.outcome.winningObservedTeamKey ~= tostring(winner) then return false, false end
+            local combat = Adapter.Call(InCombatLockdown)
+            if not combat or combat[1] then return true, false, "Leave combat before saving results." end
+            return true, true, "Saves the match with a reload, then reopens this scoreboard so you can leave. Keep the companion open to upload the data.", record
+        end
+    end
+    return false, false
+end
+function app.SaveMatchResults()
+    local visible, ready, reason = app.ResultSaveState()
+    if not visible or not ready then app.Message(reason or "No completed RBGS recording is ready to save."); return false end
+    app.Message("Saving match data. The companion will upload it when connected and uploads are enabled.")
+    return app.Reload()
 end
 function app.CompletedMatches()
     local records = {}
