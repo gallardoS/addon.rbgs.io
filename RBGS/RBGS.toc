@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\RBGS\Media\logo
 ## Notes: Assigned capture storage. Controlled Darkspear test profile; no uploads or rating.
 ## Author: rbgs.io
-## Version: 0.1.0-test
+## Version: 0.2.0-test
 ## SavedVariables: RBGSMatchData
 ## SavedVariablesPerCharacter: RBGSSettings
 

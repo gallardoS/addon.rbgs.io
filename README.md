@@ -27,7 +27,7 @@ Tests use synthetic WoW APIs. The optional companion-parser integration requires
 
 Copy `RBGS/` into the beta client's `Interface/AddOns/`, restart WoW and enable **rbgs.io**. The debugger can remain enabled. The product uses the original logo and separate per-character `RBGSSettings` for its minimap button.
 
-The initial controlled adapter supports Forever `1.60.1 / 70338 / 16001` and Darkspear Islands (`2997`). Before entering the BG, paste the assignment command issued by the companion:
+The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`2997`). It checks required game functions and bounded name, map, result and scoreboard data instead of rejecting a new build number. Actual game version, build and interface are saved with each capture. Missing optional statistics remain unknown; unreadable required data cannot produce a completed capture. WoW's own addon-loading Interface metadata may still need updating after an interface change. Before entering the BG, paste the assignment command issued by the companion:
 
 ```text
 /rbgs match RB2:<captureId>:<assignmentCode>

@@ -29,6 +29,14 @@ local function integer(value, max)
     return type(value) == "number" and value >= 0 and value <= (max or 9007199254740991) and value == math.floor(value)
 end
 Store.Integer = integer
+local function gameVersion(value)
+    return text(value) and #value <= 32 and value:match("^%d[%d%.]*$") ~= nil
+        and not value:find("%.%.") and value:sub(-1) ~= "."
+end
+local function gameBuild(value)
+    return type(value) == "string" and #value <= 10 and value:match("^%d+$") ~= nil and tonumber(value) > 0
+end
+Store.GameVersion, Store.GameBuild = gameVersion, gameBuild
 local function uuid(value)
     if type(value) ~= "string" or #value ~= 36 then return false end
     return value:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
@@ -120,8 +128,8 @@ function Store.Valid(record)
     local client, c = record.client, record.capture
     if not keys(client, "|addonVersion|adapterVersion|product|gameVersion|gameBuild|interface|")
         or not text(client.addonVersion) or not text(client.adapterVersion) or client.product ~= "wow_classic_beta"
-        or not text(client.gameVersion) or type(client.gameBuild) ~= "string" or #client.gameBuild > 10
-        or not client.gameBuild:match("^%d+$") or not integer(client.interface) then return false end
+        or not gameVersion(client.gameVersion) or not gameBuild(client.gameBuild)
+        or not integer(client.interface) or client.interface == 0 then return false end
     if not keys(c, "|state|stage|continuity|incompleteReason|map|startedAt|endedAt|roster|outcome|")
         or not array(c.roster, 40) or c.continuity ~= "CONTINUOUS" and c.continuity ~= "UNKNOWN"
         or c.startedAt ~= nil and not timestamp(c.startedAt) or c.endedAt ~= nil and not timestamp(c.endedAt) then return false end
@@ -217,11 +225,12 @@ function Store:Fail(reason, at, continuity)
     candidate.capture.continuity = continuity or candidate.capture.continuity
     return self:Commit(index, candidate)
 end
-function Store:Restore(character, at)
+function Store:Restore(character, at, client)
     local record = self:Active()
     if not record then return end
     if record.capture.stage ~= "ARMED" then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
     if not identity(character) or not equal(record.observedCharacter, character) then return self:Fail("CHARACTER_CHANGED", at) end
+    if client and not equal(record.client, client) then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
 end
 function Store:Enter(character, map, at, cleanEntry)
     local record, index = self:Active()

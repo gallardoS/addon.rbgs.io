@@ -73,7 +73,7 @@ frame:SetScript("OnEvent", function(_, event, name)
         loggedIn = true
         app.client, app.adapterError = Adapter.Client()
         if app.adapterError and app.store:Active() then app.store:Fail("UNSUPPORTED_ADAPTER", Adapter.Time())
-        else app.store:Restore(Adapter.Identity(), Adapter.Time()) end
+        else app.store:Restore(Adapter.Identity(), Adapter.Time(), app.client) end
         updateContext()
         if app.store.error or app.adapterError then app.Message(app.store.error or app.adapterError) end
         refresh()
@@ -119,7 +119,7 @@ end
 function app.Status()
     if not app.store then return "Waiting for addon load." end
     if app.store.error then return app.store.error end
-    local lines = {app.adapterError or app.eventError or "Controlled test profile: Darkspear / 70338. No uploads or rating.",
+    local lines = {app.adapterError or app.eventError or Adapter.Problem() or "Darkspear test matches. Tests do not change your rating.",
         "Stored attempts: " .. #app.store.root.captures .. " / 8"}
     for _, record in ipairs(app.store.root.captures) do
         local c = record.capture

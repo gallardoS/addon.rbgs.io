@@ -246,6 +246,14 @@ class ProductCaptureTests(unittest.TestCase):
         self.assertNotIn("damage", row)
         self.assertEqual(row["healing"], 0)
 
+    def test_missing_optional_team_stays_unknown_instead_of_becoming_a_faction(self):
+        self.arm(); self.enter()
+        self.lua.execute('function GetBattlefieldScore() return "Synthetic", 1, 2, 3, nil, nil, nil, nil, nil, 100, 0 end')
+        self.finish()
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+        self.assertNotIn("observedTeamKey", self.last()["capture"]["roster"][0])
+
+
     def test_unusable_or_oversized_roster_cannot_complete(self):
         self.arm(); self.enter()
         self.lua.execute('fire("PVP_MATCH_COMPLETE"); FixtureWinner=1; FixtureScoreCount=41; fire("UPDATE_BATTLEFIELD_SCORE")')
@@ -417,11 +425,76 @@ class ProductCaptureTests(unittest.TestCase):
             expected = data(self.lua.globals().RBGSMatchData)
             self.command("cancel"); self.command("clear"); self.assertEqual(self.saved(), expected)
 
-    def test_unsupported_build_and_missing_identity_cannot_arm(self):
-        self.lua.execute('FixtureBuild="99999"; fire("PLAYER_LOGIN")'); self.arm()
+    def test_new_build_version_and_interface_are_metadata_not_capture_gates(self):
+        for version, build, interface in (("1.60.2", "99999", 16002), ("1.61.0", "100001", 16100)):
+            with self.subTest(build=build):
+                self.boot()
+                self.lua.execute(f'function GetBuildInfo() return "{version}", "{build}", "fixture", {interface} end; fire("PLAYER_LOGIN")')
+                self.arm(); self.enter(); self.finish()
+                self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+                self.assertEqual(self.last()["client"]["gameVersion"], version)
+                self.assertEqual(self.last()["client"]["gameBuild"], build)
+                self.assertEqual(self.last()["client"]["interface"], interface)
+                self.assertEqual(self.last()["client"]["adapterVersion"], "darkspear-scoreboard-v1")
+
+
+    def test_missing_identity_cannot_arm(self):
+        self.lua.execute('function UnitName() return nil end'); self.arm()
         self.assertEqual(self.saved()["captures"], {})
-        self.boot(); self.lua.execute('function UnitName() return nil end'); self.arm()
-        self.assertEqual(self.saved()["captures"], {})
+
+
+    def test_missing_required_api_prevents_arming_with_specific_reason(self):
+        for name in ("GetBattlefieldScore", "GetBattlefieldWinner", "RequestBattlefieldScoreData"):
+            with self.subTest(api=name):
+                self.boot()
+                self.lua.execute(f'{name}=nil; fire("PLAYER_LOGIN")')
+                self.arm()
+                self.assertEqual(self.saved()["captures"], {})
+                self.assertIn(name, self.app.adapterError)
+
+
+    def test_malformed_version_metadata_cannot_arm(self):
+        for version, build, interface in (("1..60", "99999", 16002), ("1.60.2", "bad", 16002),
+                                           ("1.60.2", "00000", 16002), ("1.60.2", "99999", 0)):
+            with self.subTest(metadata=(version, build, interface)):
+                self.boot()
+                self.lua.execute(f'function GetBuildInfo() return "{version}", "{build}", "fixture", {interface} end; fire("PLAYER_LOGIN")')
+                self.arm()
+                self.assertEqual(self.saved()["captures"], {})
+                self.assertIn("game version", self.app.adapterError)
+
+
+    def test_changed_scoreboard_shapes_never_become_completed_captures(self):
+        for expression in ('"Synthetic", 1, 2, 3',
+                           '"Synthetic", 1, 2, 3, 0, 0, nil, nil, nil, "shifted", 0',
+                           '"Synthetic", 1, 2, 3, 0, 7, nil, nil, nil, 100, 0'):
+            with self.subTest(scoreboard=expression):
+                self.boot(); self.arm(); self.enter()
+                self.lua.execute('function GetBattlefieldScore() return ' + expression + ' end')
+                self.finish()
+                self.assertEqual(self.last()["capture"]["stage"], "FINAL_PENDING")
+                self.assertIn("scoreboard", self.app.Adapter.Problem())
+                self.lua.execute('tick(31)')
+                self.assertEqual(self.last()["capture"]["state"], "INCOMPLETE")
+
+
+    def test_build_change_does_not_rewrite_already_saved_captures(self):
+        self.arm(); self.enter(); self.finish()
+        before = self.saved()
+        self.boot(before)
+        self.lua.execute('function GetBuildInfo() return "1.61.0", "100001", "fixture", 16100 end; fire("PLAYER_LOGIN")')
+        self.assertEqual(self.saved(), before)
+
+
+    def test_patch_during_armed_attempt_preserves_provenance_and_allows_a_fresh_attempt(self):
+        self.arm()
+        previous_client = self.last()["client"]
+        self.lua.execute('function GetBuildInfo() return "1.61.0", "100001", "fixture", 16100 end; fire("PLAYER_LOGIN")')
+        self.assertEqual(self.last()["client"], previous_client)
+        self.assertEqual(self.last()["capture"]["incompleteReason"], "SESSION_BOUNDARY_UNCERTAIN")
+        self.arm(TOKEN2); self.enter(); self.finish()
+        self.assertEqual(self.last()["client"]["gameBuild"], "100001")
+        self.assertEqual(self.last()["capture"]["state"], "COMPLETE")
 
     def test_product_panel_launcher_and_reload_guard(self):
         self.command("show")

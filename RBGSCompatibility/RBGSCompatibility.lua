@@ -89,6 +89,7 @@ local function readIdentity()
     local realm, realmError = safeCall(GetRealmName)
     return {
         name = values(name), nameError = nameError,
+        identityProfile = "FOREVER_GIVEN_SURNAME_V1",
         guid = values(guid), guidError = guidError,
         realm = values(realm), realmError = realmError,
     }
