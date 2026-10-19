@@ -162,17 +162,17 @@ function Store.New(root)
     local self = setmetatable({root=root}, {__index=Store})
     if root == nil then self.root = {schema=2, captures={}}; return self end
     if not keys(root, "|schema|captures|") or root.schema ~= 2 or not array(root.captures, Store.MAX_CAPTURES) then
-        self.error = "Saved capture format is unsupported. Data preserved; back up RBGS.lua before repair."; return self
+        self.error = "This saved match format is not supported. Your data is kept. Back up RBGS.lua before getting help."; return self
     end
     local ids, active = {}, 0
     for _, record in ipairs(root.captures) do
         if not Store.Size(record) or not Store.Valid(record) or ids[record.captureId:lower()] then
-            self.error = "Saved capture data is invalid. Data preserved; back up RBGS.lua before repair."; return self
+            self.error = "Cannot read your saved match data. Your data is kept. Back up RBGS.lua before getting help."; return self
         end
         ids[record.captureId:lower()] = true
         if pending[record.capture.stage] then active = active + 1 end
     end
-    if active > 1 then self.error = "Multiple active captures found. Data preserved; repair required." end
+    if active > 1 then self.error = "More than one recording is active. Your data is kept. Get help before starting another match." end
     return self
 end
 function Store:Active()
@@ -186,7 +186,7 @@ function Store:Commit(index, candidate)
     if previous.capture.stage == "COMPLETE" or previous.capture.stage == "INCOMPLETE" then return false end
     candidate.captureRevision = previous.captureRevision
     if equal(previous, candidate) then return true end
-    if previous.captureRevision >= 2147483647 then self.error = "Capture revision limit reached; data preserved."; return false end
+    if previous.captureRevision >= 2147483647 then self.error = "This recording has reached its update limit. Your saved data is kept."; return false end
     candidate.captureRevision = previous.captureRevision + 1
     local fits, valid = Store.Size(candidate), Store.Valid(candidate)
     if not fits or not valid then
@@ -195,26 +195,26 @@ function Store:Commit(index, candidate)
         candidate.captureRevision = previous.captureRevision + 1
         candidate.capture.state, candidate.capture.stage = "INCOMPLETE", "INCOMPLETE"
         candidate.capture.incompleteReason = fits and "MISSING_REQUIRED_DATA" or "STORAGE_FULL"
-        if not Store.Size(candidate) then self.error = "Storage full; previous snapshot preserved."; return false end
+        if not Store.Size(candidate) then self.error = "Match storage is full. The previous saved version is kept."; return false end
     end
     self.root.captures[index] = candidate
     return true
 end
 function Store:Arm(token, character, client, inBG)
     if self.error then return false, self.error end
-    if inBG ~= false then return false, "Arm outside a battleground after the game context is available." end
+    if inBG ~= false then return false, "Enter your match command before entering the battleground. Wait for WoW to finish loading first." end
     local id, secret = Store.Token(token)
-    if not id then return false, "Use /rbgs match RB2:<captureId>:<16-character assignment code>." end
-    if self:Active() then return false, "An attempt is already active. Finish it or use /rbgs cancel." end
+    if not id then return false, "Copy the full match command from the companion and paste it into WoW chat." end
+    if self:Active() then return false, "A recording is already active. Finish it or use /rbgs cancel." end
     for _, record in ipairs(self.root.captures) do
-        if record.captureId:lower() == id then return false, "This capture ID was already used. Request a new assignment." end
+        if record.captureId:lower() == id then return false, "This match command was already used. Request a new test match." end
     end
-    if #self.root.captures >= Store.MAX_CAPTURES then return false, "Capture storage full (8/8). Existing data preserved." end
+    if #self.root.captures >= Store.MAX_CAPTURES then return false, "Match storage is full (8/8 recordings). Your saved data is kept." end
     local record = {captureId=id, captureRevision=1, assignmentCode=secret, client=copy(client), observedCharacter=copy(character),
         capture={state="INCOMPLETE", stage="ARMED", continuity="CONTINUOUS", incompleteReason="CAPTURE_PENDING", roster={}, outcome={kind="UNKNOWN"}}}
-    if not Store.Size(record) or not Store.Valid(record) then return false, "Character/client data unavailable or outside capture limits." end
+    if not Store.Size(record) or not Store.Valid(record) then return false, "Cannot read the character or game details needed to record this match." end
     self.root.captures[#self.root.captures + 1] = record
-    return true, "Attempt armed for Darkspear controlled testing. Enter the next BG; do not reload during capture."
+    return true, "Ready to record your next Darkspear test match. Enter the battleground. Do not use /reload while recording."
 end
 function Store:Fail(reason, at, continuity)
     local record, index = self:Active()

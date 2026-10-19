@@ -15,7 +15,7 @@ end
 local function changed(oldStage)
     local active = app.store and app.store:Active()
     if oldStage and not active then
-        app.Message("Attempt ended. Use /reload before leaving to save the capture; inspect /rbgs status.")
+        app.Message("Recording ended. Use /reload before leaving to save your match data. Check /rbgs status for details.")
     end
     refresh()
 end
@@ -120,18 +120,30 @@ end)
 for _, event in ipairs({"ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
     "PVP_MATCH_ACTIVE", "PVP_MATCH_COMPLETE", "PLAYER_PVP_MATCH_COMPLETE", "UPDATE_BATTLEFIELD_SCORE"}) do
     local ok = pcall(frame.RegisterEvent, frame, event)
-    if not ok and event == "UPDATE_BATTLEFIELD_SCORE" then app.eventError = "Scoreboard event unavailable; capture disabled." end
+    if not ok and event == "UPDATE_BATTLEFIELD_SCORE" then app.eventError = "Cannot receive scoreboard updates. Match recording is unavailable." end
 end
 
+local stageLabels = {
+    ARMED="Ready to record", RECORDING="Recording match", FINAL_PENDING="Waiting for final scoreboard",
+    COMPLETE="Match recorded", INCOMPLETE="Match data incomplete",
+}
+local reasonLabels = {
+    CAPTURE_PENDING="Recording is not finished yet", MAP_MISMATCH="The battleground changed",
+    CHARACTER_CHANGED="The character changed", EARLY_EXIT="Left before the final result was saved",
+    SESSION_BOUNDARY_UNCERTAIN="Recording was interrupted by a reload, logout or game update",
+    MISSING_FINAL_OUTCOME="The final result could not be read", MISSING_REQUIRED_DATA="Some required match data is missing",
+    UNSUPPORTED_ADAPTER="This game data cannot be read", STORAGE_FULL="Match storage is full", CANCELLED="Recording cancelled",
+}
 function app.Status()
-    if not app.store then return "Waiting for addon load." end
+    if not app.store then return "Waiting for the addon to load." end
     if app.store.error then return app.store.error end
     local lines = {app.adapterError or app.eventError or Adapter.Problem() or "Darkspear test matches. Tests do not change your rating.",
-        "Stored attempts: " .. #app.store.root.captures .. " / 8"}
+        "Check upload status in the companion.", "Saved recordings: " .. #app.store.root.captures .. " / 8"}
     for _, record in ipairs(app.store.root.captures) do
         local c = record.capture
-        lines[#lines + 1] = record.captureId .. "  |  revision " .. record.captureRevision .. "  |  " .. c.stage
-        lines[#lines + 1] = "  " .. (c.incompleteReason or "Final observation captured") .. "  |  rows " .. #c.roster
+        lines[#lines + 1] = stageLabels[c.stage] or "Recording status unknown"
+        lines[#lines + 1] = "  " .. (reasonLabels[c.incompleteReason] or "Final scoreboard recorded") .. "  |  " .. #c.roster .. " players"
+        lines[#lines + 1] = "  Data ID: " .. record.captureId .. "  |  version " .. record.captureRevision
     end
     return table.concat(lines, "\n")
 end
@@ -141,7 +153,7 @@ function app.Reload()
     if combat and combat[1] then app.Message("Leave combat before reloading."); return false end
     local active = app.store and app.store:Active()
     if active and active.capture.stage ~= "ARMED" then
-        app.Message("Reload interrupts this attempt. It will restore as INCOMPLETE; use /reload manually only if necessary."); return false
+        app.Message("Reloading now will interrupt the recording and leave incomplete match data. Use /reload manually only if necessary."); return false
     end
     if app.PrepareResultsReload then pcall(app.PrepareResultsReload) end
     if not Adapter.Call(ReloadUI) then
@@ -193,16 +205,16 @@ end
 function app.HistoryText(index)
     if app.store and app.store.error then return app.store.error end
     local records = app.CompletedMatches()
-    if #records == 0 then return "No completed matches yet.\nLocal captures are not verified or uploaded." end
+    if #records == 0 then return "No completed matches recorded yet.\nCheck uploads in the companion. Results still need to be verified." end
     local record = records[math.max(1, math.min(index or 1, #records))]
     local c = record.capture
     local team = c.outcome.winningObservedTeamKey == "0" and "Horde" or "Alliance"
     local lines = {"COMPLETED MATCH " .. math.max(1, math.min(index or 1, #records)) .. " / " .. #records,
         c.map.observedName .. "  |  " .. team .. " won  |  " .. #c.roster .. " players",
-        "Entry (UTC): " .. c.startedAt, "Final (UTC): " .. c.endedAt,
-        "Observed character: " .. record.observedCharacter.name,
-        "Capture: " .. record.captureId .. "  |  revision " .. record.captureRevision,
-        "Local observation; not verified or uploaded.", "", "FINAL SCOREBOARD"}
+        "Started (UTC): " .. c.startedAt, "Ended (UTC): " .. c.endedAt,
+        "Character in saved data: " .. record.observedCharacter.name,
+        "Data ID: " .. record.captureId .. "  |  version " .. record.captureRevision,
+        "Check uploads in the companion. Result not yet verified.", "", "FINAL SCOREBOARD"}
     for _, row in ipairs(c.roster) do
         local faction = row.observedTeamKey == "0" and "Horde" or row.observedTeamKey == "1" and "Alliance" or "Unknown team"
         lines[#lines+1] = row.character.name .. "  /  " .. faction
@@ -219,7 +231,7 @@ SlashCmdList.RBGS = function(command)
     local action, argument = (command or ""):match("^%s*(%S*)%s*(.-)%s*$")
     action = action:lower()
     if action == "match" then
-        if not loggedIn or not app.store then app.Message("Wait for login before arming."); return end
+        if not loggedIn or not app.store then app.Message("Wait for your character to log in before entering the match command."); return end
         if app.adapterError or app.eventError then app.Message(app.adapterError or app.eventError); return end
         updateContext()
         local _, message = app.store:Arm(argument, Adapter.Identity(), app.client, Adapter.Context())
@@ -228,11 +240,11 @@ SlashCmdList.RBGS = function(command)
         app.Message(app.Status())
     elseif action == "cancel" then
         if app.store and app.store:Fail("CANCELLED", Adapter.Time()) then
-            app.Message("Attempt cancelled and retained. Use /reload to save; request a fresh assignment.")
-        else app.Message("No active attempt.") end
+            app.Message("Recording cancelled. Your data is kept. Use /reload to save it, then request a new test match.")
+        else app.Message("No match recording is active.") end
         refresh()
     elseif action == "reload" then app.Reload()
     elseif action == "history" then if app.ShowHistory then app.ShowHistory() end
     elseif action == "" or action == "show" then if app.ShowPanel then app.ShowPanel() end
-    else app.Message("Commands: match <token>, status, history, show, cancel, reload. Stored captures cannot be cleared here.") end
+    else app.Message("Commands: match <token>, status, history, show, cancel, reload. Saved match data cannot be deleted here.") end
 end

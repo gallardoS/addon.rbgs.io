@@ -610,7 +610,7 @@ class ProductCaptureTests(unittest.TestCase):
         self.lua.execute('click(RBGSHistoryNext)')
         self.assertIn("COMPLETED MATCH 2 / 2", self.lua.globals().visibleText())
         self.lua.execute('click(RBGSProductHistory)')
-        self.assertIn("Stored attempts: 2 / 8", self.lua.globals().visibleText())
+        self.assertIn("Saved recordings: 2 / 8", self.lua.globals().visibleText())
 
     def test_corrupt_or_unknown_saved_data_is_preserved_and_blocks_arming(self):
         for saved in ({"schema": 99, "captures": []}, {"schema": 2, "captures": [{"broken": "retained"}]}):

@@ -27,7 +27,7 @@ local function label(parent, font, x, y, width)
 end
 label(window, "GameFontNormalLarge", 76, -24, 480):SetText("rbgs.io")
 label(window, "GameFontHighlightSmall", 20, -72, 560):SetText(
-    "Paste /rbgs match <token> before entering the next BG.\nCaptures stay on this PC; the companion does not upload them yet.")
+    "Paste your match command from the companion into WoW chat before the battleground.\nAfter the match, use /reload or log out. Check uploads in the companion.")
 local function button(name, caption, x, y, width, action)
     local control = CreateFrame("Button", name, window, "UIPanelButtonTemplate")
     control:SetSize(width, 26); control:SetPoint("TOPLEFT", x, y)
@@ -61,7 +61,7 @@ function app.Refresh()
         historyIndex = math.max(1, math.min(historyIndex, count))
         previous:Show(); nextMatch:Show()
         previous:SetEnabled(historyIndex > 1); nextMatch:SetEnabled(historyIndex < count)
-        historyButton:SetText("Capture status")
+        historyButton:SetText("Recording status")
     else
         previous:Hide(); nextMatch:Hide(); historyButton:SetText("Completed matches")
     end

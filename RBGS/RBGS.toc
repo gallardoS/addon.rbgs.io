@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: rbgs.io
 ## IconTexture: Interface\AddOns\RBGS\Media\logo
-## Notes: Assigned capture storage. Controlled Darkspear test profile; no uploads or rating.
+## Notes: Records Darkspear test matches. Check uploads in the companion. Tests do not change your rating.
 ## Author: rbgs.io
 ## Version: 0.2.0-test
 ## SavedVariables: RBGSMatchData
