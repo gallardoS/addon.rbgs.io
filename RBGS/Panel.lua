@@ -1,5 +1,6 @@
 local addonName, app = ...
 local LOGO = "Interface\\AddOns\\" .. addonName .. "\\Media\\logo"
+local MINIMAP_LOGO = "Interface\\AddOns\\" .. addonName .. "\\Media\\logo-minimap-32.tga"
 local window = CreateFrame("Frame", "RBGSProductPanel", UIParent)
 window:SetSize(600, 440)
 window:SetPoint("CENTER")
@@ -79,13 +80,15 @@ end
 window:SetScript("OnShow", app.Refresh)
 window:Hide()
 
-local launcher = CreateFrame("Button", "RBGSProductLauncher", Minimap or UIParent)
+local launcher = CreateFrame("Button", "RBGSMinimapButton", Minimap or UIParent)
+_G.RBGSProductLauncher = launcher -- Preserve the previous global for existing integrations.
 launcher:SetSize(31, 31); launcher:SetFrameStrata("HIGH")
 launcher:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 1) + 20)
 launcher:EnableMouse(true); launcher:RegisterForClicks("LeftButtonUp"); launcher:RegisterForDrag("LeftButton")
 launcher:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 local icon = launcher:CreateTexture(nil, "BACKGROUND")
-icon:SetSize(20, 20); icon:SetPoint("TOPLEFT", 7, -5); icon:SetTexture(LOGO)
+icon:SetSize(20, 20); icon:SetPoint("CENTER", launcher, "CENTER", 0, 0)
+icon:SetTexture(MINIMAP_LOGO, "CLAMP", "CLAMP", "LINEAR")
 local border = launcher:CreateTexture(nil, "OVERLAY")
 border:SetSize(53, 53); border:SetPoint("TOPLEFT")
 border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
@@ -97,6 +100,7 @@ local function settings()
     return RBGSSettings
 end
 local function position()
+    if Minimap and launcher:GetParent() ~= Minimap then return end
     if not Minimap then launcher:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -30, -130); return end
     local radians = math.rad(settings().minimapAngle)
     local radius = math.max(Minimap:GetWidth(), Minimap:GetHeight())/2 + 8
@@ -109,7 +113,7 @@ launcher:SetScript("OnClick", function(self)
     if window:IsShown() then window:Hide() else app.ShowPanel() end
 end)
 launcher:SetScript("OnDragStart", function(self)
-    if not Minimap then return end
+    if not Minimap or self:GetParent() ~= Minimap then return end
     self.dragging = true
     self:SetScript("OnUpdate", function()
         local x, y = GetCursorPosition()

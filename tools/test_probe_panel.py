@@ -52,6 +52,7 @@ function methods:SetJustifyV() end
 function methods:SetFrameStrata(value) self.strata=value end
 function methods:SetFrameLevel(value) self.level=value end
 function methods:GetFrameLevel() return self.level or 1 end
+function methods:GetParent() return self.parent end
 function methods:RegisterForClicks(...) self.clicks={...} end
 function methods:SetHighlightTexture(value) self.highlight=value end
 function methods:GetCenter() return 100, 100 end
