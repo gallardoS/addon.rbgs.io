@@ -134,9 +134,18 @@ function Store.Valid(record)
         or not text(client.addonVersion) or not text(client.adapterVersion) or not profile(client)
         or not gameVersion(client.gameVersion) or not gameBuild(client.gameBuild)
         or not integer(client.interface) or client.interface == 0 then return false end
-    if not keys(c, "|state|stage|continuity|incompleteReason|map|startedAt|endedAt|roster|outcome|")
-        or not array(c.roster, 40) or c.continuity ~= "CONTINUOUS" and c.continuity ~= "UNKNOWN"
+    if not keys(c, "|state|stage|continuity|interruptions|incompleteReason|map|startedAt|endedAt|roster|outcome|")
+        or not array(c.roster, 40) or c.continuity ~= "CONTINUOUS" and c.continuity ~= "UNKNOWN" and c.continuity ~= "RESUMED"
         or c.startedAt ~= nil and not timestamp(c.startedAt) or c.endedAt ~= nil and not timestamp(c.endedAt) then return false end
+    if c.interruptions ~= nil then
+        if not array(c.interruptions, 32) or #c.interruptions == 0 or c.continuity == "CONTINUOUS" then return false end
+        local last = 0
+        for _, gap in ipairs(c.interruptions) do
+            if not keys(gap, "|before|after|") or not integer(gap.before) or not integer(gap.after)
+                or gap.before < last or gap.after < gap.before or gap.after - gap.before > 120 then return false end
+            last = gap.after
+        end
+    elseif c.continuity == "RESUMED" then return false end
     if c.map ~= nil and (not keys(c.map, "|profile|observedName|gameMapId|")
         or c.map.profile ~= profile(client) or not text(c.map.observedName)
         or c.map.gameMapId ~= nil and not integer(c.map.gameMapId)) then return false end
@@ -155,7 +164,7 @@ function Store.Valid(record)
         if outcome.winningObservedTeamKey ~= "0" and outcome.winningObservedTeamKey ~= "1" then return false end
     elseif outcome.winningObservedTeamKey ~= nil then return false end
     if c.state == "COMPLETE" then
-        return c.stage == "COMPLETE" and c.continuity == "CONTINUOUS" and c.incompleteReason == nil
+        return c.stage == "COMPLETE" and c.continuity ~= "UNKNOWN" and c.incompleteReason == nil
             and c.map ~= nil and c.startedAt ~= nil and c.endedAt ~= nil and #c.roster > 0 and outcome.kind == "WIN"
     end
     return c.state == "INCOMPLETE" and (pending[c.stage] and c.incompleteReason == "CAPTURE_PENDING"
@@ -218,7 +227,7 @@ function Store:Arm(token, character, client, inBG)
         capture={state="INCOMPLETE", stage="ARMED", continuity="CONTINUOUS", incompleteReason="CAPTURE_PENDING", roster={}, outcome={kind="UNKNOWN"}}}
     if not Store.Size(record) or not Store.Valid(record) then return false, "Cannot read the character or game details needed to record this match." end
     self.root.captures[#self.root.captures + 1] = record
-    return true, "Ready to record your next " .. (client.product == "wow_anniversary" and "WSG" or "Darkspear") .. " test match. Enter the battleground. Do not use /reload while recording."
+    return true, "Ready to record your next " .. (client.product == "wow_anniversary" and "WSG" or "Darkspear") .. " test match. Enter the battleground. Reload recovery requires the same match and a readable battleground clock."
 end
 function Store:Fail(reason, at, continuity)
     local record, index = self:Active()
@@ -229,12 +238,45 @@ function Store:Fail(reason, at, continuity)
     candidate.capture.continuity = continuity or candidate.capture.continuity
     return self:Commit(index, candidate)
 end
-function Store:Restore(character, at, client)
+function Store:Restore(character, at, client, deferRecording)
     local record = self:Active()
     if not record then return end
-    if record.capture.stage ~= "ARMED" then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
     if not identity(character) or not equal(record.observedCharacter, character) then return self:Fail("CHARACTER_CHANGED", at) end
+    -- An armed attempt belongs to its original client session. Do not rewrite
+    -- its provenance when the game/addon changes before entering the BG.
     if client and not equal(record.client, client) then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
+    if record.capture.stage ~= "ARMED" and not deferRecording then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
+end
+function Store:Resume(character, map, at, client, checkpoint, now, isReload)
+    local record, index = self:Active()
+    if not record or record.capture.stage == "ARMED" then return false end
+    self:Restore(character, at, client, true)
+    if not self:Active() then return false end
+    local valid = isReload and equal(record.capture.map, map)
+        and type(checkpoint) == "table" and checkpoint.captureId == record.captureId
+        and checkpoint.revision == record.captureRevision and type(now) == "table"
+        and integer(checkpoint.observedAt) and integer(checkpoint.runtimeMs)
+        and integer(checkpoint.instanceId) and integer(now.observedAt) and integer(now.runtimeMs) and integer(now.instanceId)
+    if valid then
+        local elapsed = now.observedAt - checkpoint.observedAt
+        local runtime = now.runtimeMs - checkpoint.runtimeMs
+        valid = elapsed >= 0 and elapsed <= 120 and runtime >= 0 and checkpoint.instanceId == now.instanceId
+        if valid then
+            -- A positive runtime fingerprints the match's start. A zero/frozen
+            -- clock additionally needs Classic's nonzero battlefield instance ID.
+            valid = checkpoint.runtimeMs > 0 and math.abs(runtime - elapsed * 1000) <= 2000
+                or checkpoint.instanceId > 0 and (checkpoint.runtimeMs == 0 and runtime <= (elapsed + 2) * 1000
+                    or record.capture.stage == "FINAL_PENDING" and runtime == 0)
+        end
+    end
+    if not valid or record.capture.interruptions and #record.capture.interruptions >= 32 then
+        self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN"); return false
+    end
+    local candidate = copy(record)
+    candidate.capture.continuity = "RESUMED"
+    candidate.capture.interruptions = candidate.capture.interruptions or {}
+    table.insert(candidate.capture.interruptions, {before=checkpoint.observedAt, after=now.observedAt})
+    return self:Commit(index, candidate) and self:Active() ~= nil
 end
 function Store:Enter(character, map, at, cleanEntry)
     local record, index = self:Active()

@@ -136,3 +136,20 @@ function Adapter.Roster()
     return rows
 end
 function Adapter.Request() Adapter.Call(RequestBattlefieldScoreData) end
+
+-- Local reload evidence, never an authoritative server match identifier.
+function Adapter.SessionSnapshot()
+    local clock = Adapter.Call(GetServerTime)
+    local runtime = Adapter.Call(GetBattlefieldInstanceRunTime)
+    local now, elapsed = clock and numberValue(clock[1]), runtime and numberValue(runtime[1])
+    if not now or not elapsed then return nil end
+    local instanceId = 0
+    for index = 1, 3 do
+        local status = Adapter.Call(GetBattlefieldStatus, index)
+        if status and status[1] == "active" then
+            instanceId = numberValue(status[3]) or 0
+            break
+        end
+    end
+    return {observedAt=now, runtimeMs=elapsed, instanceId=instanceId}
+end

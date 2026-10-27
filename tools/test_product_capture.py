@@ -67,10 +67,11 @@ class ProductCaptureTests(unittest.TestCase):
     def setUp(self):
         self.boot()
 
-    def boot(self, saved=None, settings=None):
+    def boot(self, saved=None, settings=None, setup=""):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute(MOCK_WOW)
         self.lua.execute(API)
+        self.lua.execute(setup)
         if saved is not None or settings is not None:
             def table(value):
                 if isinstance(value, list):
@@ -377,12 +378,124 @@ class ProductCaptureTests(unittest.TestCase):
                 self.lua.execute('fire("PVP_MATCH_COMPLETE")')
             before = self.last()
             self.boot(self.saved())
+            self.lua.execute('fire("PLAYER_ENTERING_WORLD", true, false)')
             after = self.last()
             self.assertEqual(after["captureId"], before["captureId"])
             self.assertEqual(after["captureRevision"], before["captureRevision"] + 1)
             self.assertEqual(after["capture"]["stage"], "INCOMPLETE")
             self.assertEqual(after["capture"]["incompleteReason"], "SESSION_BOUNDARY_UNCERTAIN")
             self.assertEqual(after["capture"]["continuity"], "UNKNOWN")
+
+    def recording_checkpoint(self, final_pending=False):
+        self.boot(setup='function GetBattlefieldInstanceRunTime() return FixtureRuntime end; function GetBattlefieldStatus() return "active", "Darkspear Islands", FixtureInstanceId end')
+        self.lua.execute('FixtureRuntime=60000; FixtureInstanceId=17')
+        self.arm(); self.enter()
+        self.lua.execute('FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE")')
+        if final_pending:
+            self.lua.execute('fire("PVP_MATCH_COMPLETE")')
+        self.lua.execute('fire("PLAYER_LOGOUT")')
+        return self.saved(), data(self.lua.globals().RBGSSettings)
+
+    def resume_fixture(self, saved, settings, extra="", world=True):
+        self.boot(saved, settings, setup='FixtureInstanceType="pvp"; FixtureNow=1791734410; FixtureRuntime=70000; FixtureInstanceId=17; function GetBattlefieldInstanceRunTime() return FixtureRuntime end; function GetBattlefieldStatus() return "active", "Darkspear Islands", FixtureInstanceId end; ' + extra)
+        if world:
+            self.lua.execute('fire("PLAYER_ENTERING_WORLD", false, true)')
+
+    def test_reload_resumes_same_game_and_requires_fresh_scores(self):
+        for final_pending in (False, True):
+            with self.subTest(final_pending=final_pending):
+                saved, settings = self.recording_checkpoint(final_pending)
+                original = saved["captures"][0]
+                self.resume_fixture(saved, settings, 'FixtureWinner=1; FixtureScoreCount=2')
+                capture = self.last()["capture"]
+                self.assertEqual(self.last()["captureId"], original["captureId"])
+                self.assertEqual(capture["startedAt"], original["capture"]["startedAt"])
+                self.assertEqual(capture["continuity"], "RESUMED")
+                self.assertEqual(capture["interruptions"], [{"before": 1791734400, "after": 1791734410}])
+                self.assertNotEqual(capture["stage"], "COMPLETE")
+                self.assertIsNone(self.lua.globals().RBGSSettings.captureCheckpoint)
+                self.lua.execute('tick(2)')
+                self.assertNotEqual(self.last()["capture"]["stage"], "COMPLETE")
+                self.lua.execute('fire("UPDATE_BATTLEFIELD_SCORE")')
+                self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+                frozen = self.saved(); self.boot(frozen)
+                self.assertEqual(self.saved(), frozen)
+
+    def test_reload_rejects_other_game_character_client_and_stale_checkpoint(self):
+        saved, settings = self.recording_checkpoint()
+        for extra in ('FixtureInstanceId=18', 'FixtureRuntime=1000', 'FixtureRuntime=100000',
+                      'FixtureNow=1791734600', 'FixtureNow=1791734390', 'FixtureInstanceType="none"',
+                      'FixtureMapId=489', 'FixtureSurname="Other"', 'FixtureBuild="99999"',
+                      'GetBattlefieldInstanceRunTime=nil'):
+            with self.subTest(extra=extra):
+                self.resume_fixture(saved, copy.deepcopy(settings), extra)
+                self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+        stale = copy.deepcopy(settings); stale["captureCheckpoint"]["revision"] += 1
+        self.resume_fixture(saved, stale)
+        self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+        self.resume_fixture(saved, {})
+        self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+
+    def test_login_and_missing_world_event_never_resume(self):
+        saved, settings = self.recording_checkpoint()
+        for event in ('fire("PLAYER_ENTERING_WORLD", true, false)', 'fire("PLAYER_ENTERING_WORLD")', 'tick(31)'):
+            self.resume_fixture(saved, copy.deepcopy(settings), world=False)
+            self.lua.execute(event)
+            self.assertEqual(self.last()["capture"]["incompleteReason"], "SESSION_BOUNDARY_UNCERTAIN")
+
+    def test_multiple_reloads_append_bounded_interruptions_and_preserve_roster(self):
+        saved, settings = self.recording_checkpoint()
+        self.resume_fixture(saved, settings)
+        self.lua.execute('fire("PLAYER_LOGOUT")')
+        saved, settings = self.saved(), data(self.lua.globals().RBGSSettings)
+        self.resume_fixture(saved, settings, 'FixtureNow=1791734420; FixtureRuntime=80000')
+        self.assertEqual(len(self.last()["capture"]["interruptions"]), 2)
+        self.assertEqual(self.last()["capture"]["roster"], saved["captures"][0]["capture"]["roster"])
+        self.lua.execute('FixtureWinner=1; FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE")')
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+
+    def test_prestart_and_frozen_final_clock_need_instance_identity(self):
+        saved, settings = self.recording_checkpoint()
+        settings["captureCheckpoint"]["runtimeMs"] = 0
+        self.resume_fixture(saved, settings, 'FixtureRuntime=5000')
+        self.assertEqual(self.last()["capture"]["continuity"], "RESUMED")
+        settings["captureCheckpoint"]["instanceId"] = 0
+        self.resume_fixture(saved, settings, 'FixtureRuntime=5000; FixtureInstanceId=0')
+        self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+        saved, settings = self.recording_checkpoint(True)
+        self.resume_fixture(saved, settings, 'FixtureRuntime=60000; FixtureWinner=1; FixtureScoreCount=2')
+        self.lua.execute('fire("UPDATE_BATTLEFIELD_SCORE")')
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+
+    def test_anniversary_reload_keeps_wsg_provenance_and_finalizes(self):
+        self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+        self.lua.execute('function GetBattlefieldInstanceRunTime() return 60000 end; fire("PLAYER_LOGOUT")')
+        saved, settings = self.saved(), data(self.lua.globals().RBGSSettings)
+        setup = '''WOW_PROJECT_BURNING_CRUSADE_CLASSIC=5; WOW_PROJECT_ID=5
+            function GetBuildInfo() return "2.5.6", "70006", "fixture", 20506 end
+            function UnitName() return "SyntheticHorde", "OtherRealm" end
+            FixtureMapName="Warsong Gulch"; FixtureMapId=489; FixtureInstanceId=0'''
+        self.resume_fixture(saved, settings, setup)
+        self.assertEqual(self.last()["capture"]["continuity"], "RESUMED")
+        self.finish()
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+        self.assertEqual(self.last()["client"], saved["captures"][0]["client"])
+        self.assertEqual(self.last()["capture"]["map"]["gameMapId"], 489)
+
+    def test_interruption_limit_and_malformed_gaps_preserve_data(self):
+        saved, settings = self.recording_checkpoint()
+        saved["captures"][0]["capture"].update(continuity="RESUMED", interruptions=[{"before":1791734400,"after":1791734400}] * 32)
+        self.resume_fixture(saved, settings)
+        self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+        self.assertEqual(len(self.last()["capture"]["interruptions"]), 32)
+        for gaps in ([], [{"before":10,"after":9}], [{"before":10,"after":131}], [{"before":10,"after":20},{"before":15,"after":25}]):
+            corrupt = copy.deepcopy(saved)
+            corrupt["captures"][0]["capture"]["interruptions"] = gaps
+            self.boot(corrupt)
+            self.assertTrue(self.app.store.error)
+            if not gaps:  # Empty Lua tables have no array/object distinction.
+                corrupt["captures"][0]["capture"]["interruptions"] = {}
+            self.assertEqual(self.saved(), corrupt)
 
     def test_reload_armed_and_terminal_keep_same_revision(self):
         self.arm(); snapshot = self.saved(); self.boot(snapshot)
@@ -854,6 +967,10 @@ class ProductCaptureTests(unittest.TestCase):
         validator.validate(json_envelope(self.saved()))
         fixture = json.loads((ROOT / "tools" / "fixtures" / "capture-70338-final.sanitized.json").read_text(encoding="utf-8"))
         validator.validate(json_envelope(fixture))
+        saved, settings = self.recording_checkpoint()
+        self.resume_fixture(saved, settings)
+        validator.validate(json_envelope(self.saved()))
+        self.finish(); validator.validate(json_envelope(self.saved()))
         self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN)
         validator.validate(json_envelope(self.saved()))
         self.enter(); self.finish(); validator.validate(json_envelope(self.saved()))

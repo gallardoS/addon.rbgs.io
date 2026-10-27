@@ -4,6 +4,7 @@ local frame = CreateFrame("Frame", "RBGSCaptureEvents")
 local loaded, loggedIn, context, cleanEntry, freshScores = false, false, nil, false, false
 local pollElapsed, finalElapsed = 0, 0
 local currentCaptureId
+local restorePending, reloadCheckpoint, restoreElapsed = false, nil, 0
 
 function app.Message(message)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("rbgs.io: " .. message) end
@@ -21,6 +22,7 @@ local function changed(oldStage)
 end
 local function updateContext()
     if not loggedIn or not app.store or app.store.error then return end
+    if restorePending then return end
     local inBG, map = Adapter.Context()
     if inBG == nil then return end
     local wasBG = context
@@ -69,22 +71,59 @@ local function scores(isFresh)
     end
     changed(oldStage)
 end
-frame:SetScript("OnEvent", function(_, event, name)
+frame:SetScript("OnEvent", function(_, event, name, isReloadingUI)
     if event == "ADDON_LOADED" then
         if name ~= addonName then return end
         app.store = Store.New(RBGSMatchData)
         if RBGSMatchData == nil then RBGSMatchData = app.store.root end
         loaded = true
+        if type(RBGSSettings) == "table" then
+            reloadCheckpoint = RBGSSettings.captureCheckpoint
+            RBGSSettings.captureCheckpoint = nil -- Consume once, including on normal login.
+        end
     elseif event == "PLAYER_LOGIN" then
         if not loaded then return end
         loggedIn = true
         app.client, app.adapterError = Adapter.Client()
         if app.adapterError and app.store:Active() then app.store:Fail("UNSUPPORTED_ADAPTER", Adapter.Time())
-        else app.store:Restore(Adapter.Identity(), Adapter.Time(), app.client) end
+        else
+            local active = app.store:Active()
+            restorePending = active ~= nil and active.capture.stage ~= "ARMED"
+            app.store:Restore(Adapter.Identity(), Adapter.Time(), app.client, restorePending)
+            restorePending = restorePending and app.store:Active() ~= nil
+        end
         updateContext()
         if app.store.error or app.adapterError then app.Message(app.store.error or app.adapterError) end
         refresh()
-    elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" or event == "PVP_MATCH_ACTIVE" then
+    elseif event == "PLAYER_LOGOUT" then
+        if type(RBGSSettings) ~= "table" then RBGSSettings = {} end
+        RBGSSettings.captureCheckpoint = nil
+        local active = app.store and app.store:Active()
+        if active and active.capture.stage ~= "ARMED" and not restorePending then
+            local inBG, map = Adapter.Context()
+            app.store:Observe(Adapter.Identity(), map, nil, Adapter.Time())
+            active = app.store:Active()
+            local checkpoint = inBG and active and Adapter.SessionSnapshot()
+            if checkpoint then
+                checkpoint.captureId, checkpoint.revision = active.captureId, active.captureRevision
+                RBGSSettings.captureCheckpoint = checkpoint
+            end
+        end
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        if restorePending then
+            local inBG, map = Adapter.Context()
+            local resumed = app.store:Resume(Adapter.Identity(), inBG and map, Adapter.Time(), app.client,
+                reloadCheckpoint, Adapter.SessionSnapshot(), name == false and isReloadingUI == true)
+            restorePending, reloadCheckpoint = false, nil
+            if resumed then
+                context, cleanEntry, freshScores, finalElapsed = true, true, false, 0
+                currentCaptureId = app.store:Active().captureId
+                app.Message("Recording resumed after reload. The interruption is saved with the match data.")
+                Adapter.Request()
+            else app.Message("Recording could not resume safely. Check /rbgs status.") end
+        end
+        updateContext()
+    elseif event == "ZONE_CHANGED_NEW_AREA" or event == "PVP_MATCH_ACTIVE" then
         updateContext()
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
         scores(true)
@@ -102,6 +141,15 @@ frame:SetScript("OnEvent", function(_, event, name)
 end)
 frame:SetScript("OnUpdate", function(_, elapsed)
     if not loggedIn then return end
+    if restorePending then
+        restoreElapsed = restoreElapsed + elapsed
+        if restoreElapsed > 30 then
+            app.store:Fail("SESSION_BOUNDARY_UNCERTAIN", Adapter.Time(), "UNKNOWN")
+            restorePending, reloadCheckpoint = false, nil
+            refresh()
+        end
+        return
+    end
     pollElapsed = pollElapsed + elapsed
     local active = app.store and app.store:Active()
     if active and active.capture.stage == "FINAL_PENDING" then finalElapsed = finalElapsed + elapsed end
@@ -117,7 +165,7 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         else Adapter.Request() end
     end
 end)
-for _, event in ipairs({"ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
+for _, event in ipairs({"ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
     "PVP_MATCH_ACTIVE", "PVP_MATCH_COMPLETE", "PLAYER_PVP_MATCH_COMPLETE", "UPDATE_BATTLEFIELD_SCORE"}) do
     local ok = pcall(frame.RegisterEvent, frame, event)
     if not ok and event == "UPDATE_BATTLEFIELD_SCORE" then app.eventError = "Cannot receive scoreboard updates. Match recording is unavailable." end
@@ -143,6 +191,7 @@ function app.Status()
         local c = record.capture
         lines[#lines + 1] = stageLabels[c.stage] or "Recording status unknown"
         lines[#lines + 1] = "  " .. (reasonLabels[c.incompleteReason] or "Final scoreboard recorded") .. "  |  " .. #c.roster .. " players"
+        if c.interruptions then lines[#lines + 1] = "  Reload interruptions: " .. #c.interruptions end
         lines[#lines + 1] = "  Data ID: " .. record.captureId .. "  |  version " .. record.captureRevision
     end
     return table.concat(lines, "\n")
@@ -152,8 +201,8 @@ function app.Reload()
     if not combat then app.Message("Combat state unavailable. Use /reload manually when safe."); return false end
     if combat and combat[1] then app.Message("Leave combat before reloading."); return false end
     local active = app.store and app.store:Active()
-    if active and active.capture.stage ~= "ARMED" then
-        app.Message("Reloading now will interrupt the recording and leave incomplete match data. Use /reload manually only if necessary."); return false
+    if active and active.capture.stage ~= "ARMED" and (restorePending or not Adapter.SessionSnapshot()) then
+        app.Message("Cannot establish reload continuity for this recording. Use /reload manually only if necessary."); return false
     end
     if app.PrepareResultsReload then pcall(app.PrepareResultsReload) end
     if not Adapter.Call(ReloadUI) then
@@ -217,6 +266,7 @@ function app.HistoryText(index)
         "Character in saved data: " .. record.observedCharacter.name,
         "Data ID: " .. record.captureId .. "  |  version " .. record.captureRevision,
         "Check uploads in the companion. Result not yet verified.", "", "FINAL SCOREBOARD"}
+    if c.interruptions then table.insert(lines, 2, "Resumed after reload; recorded interruptions: " .. #c.interruptions) end
     for _, row in ipairs(c.roster) do
         local faction = row.observedTeamKey == "0" and "Horde" or row.observedTeamKey == "1" and "Alliance" or "Unknown team"
         lines[#lines+1] = row.character.name .. "  /  " .. faction

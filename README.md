@@ -35,7 +35,7 @@ The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`29
 
 The capture ID is a UUID; the assignment code is 16 uppercase Crockford-base32 characters. The addon observes the next supported BG and never imports a previous scoreboard. `/rbgs status` displays attempts; `/rbgs cancel` terminates and retains the active attempt. Codes are excluded from status/chat output.
 
-After the final result, remain in the BG until status is `COMPLETE`, then use `/reload` or **Save / reload**. Reloading during capture preserves an `INCOMPLETE / SESSION_BOUNDARY_UNCERTAIN` attempt. The save button guards active capture; no reload happens automatically. Wrong map, changed character, early exit and unavailable final results retain incomplete attempts.
+After the final result, remain in the BG until status is `COMPLETE`, then use `/reload` or **Save / reload**. A mid-match `/reload` can resume the same capture when character, client, map and the battleground clock match a recent saved checkpoint. Resumed captures retain interruption timestamps and require a fresh final scoreboard update; uncertain recovery remains `INCOMPLETE / SESSION_BOUNDARY_UNCERTAIN`. The save button guards active capture; no reload happens automatically. Wrong map, changed character, early exit and unavailable final results retain incomplete attempts.
 
 **Completed matches** or `/rbgs history` displays completed captures newest first. **Newer/Older** navigates map, UTC times, winning faction, roster and observed statistics. Unknown values stay unknown. Completed snapshots are frozen under their own ID/revision; history does not verify or erase them.
 
@@ -63,5 +63,20 @@ reads damage/healing at positions 11/12; Forever retains positions 10/11.
 After the final scoreboard is recorded, click **rbgs.io: Save results** in place
 of the native exit. It saves through a reload, reopens the Classic scoreboard
 once, and restores the original exit button. You still choose when to leave.
-Reloading before completion retains an incomplete attempt; use a new test command
-for another game. These temporary tests do not verify outcomes or change ratings.
+A mid-match reload can resume a validated recent checkpoint; uncertain recovery
+retains an incomplete attempt. Use a new test command for another game. These temporary tests do not verify outcomes or change ratings.
+
+
+## Reload recovery
+
+Before a reload, the addon saves a per-character checkpoint bound to the active
+capture ID/revision, server time, battleground runtime and available instance
+number. Only a real UI reload can resume it, after checking the same character,
+client and map plus coherent clocks within 120 seconds. Normal logins, missing
+checkpoints or uncertain continuity preserve an incomplete attempt.
+
+Recovered attempts use `RESUMED` continuity and retain up to 32 ordered
+interruption timestamp pairs. Start time, previous roster and capture identity
+are preserved; a fresh final scoreboard is required before completion. Finished
+or previously incomplete attempts stay immutable. Use current companion/API
+versions that support resumed captures before uploading them.
