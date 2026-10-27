@@ -112,6 +112,10 @@ function Adapter.Roster()
     -- are 11/12. Forever's observed 70338 layout uses damage/healing at 10/11.
     local damagePosition = app.client and app.client.product == "wow_anniversary" and 11 or 10
     local healingPosition = damagePosition + 1
+    local inBG, map = Adapter.Context()
+    local stats = Adapter.Call(GetNumBattlefieldStats)
+    local readFlags = app.client and app.client.product == "wow_anniversary"
+        and inBG == true and map.gameMapId == 489 and stats and numberValue(stats[1]) == 2
     local rows = {}
     for index = 1, total do
         local values = Adapter.Call(GetBattlefieldScore, index)
@@ -131,6 +135,14 @@ function Adapter.Roster()
             observedTeamKey=(team == 0 or team == 1) and tostring(team) or nil,
             killingBlows=numberValue(values[2]), honorableKills=numberValue(values[3]), deaths=numberValue(values[4]),
             damage=numberValue(values[damagePosition]), healing=numberValue(values[healingPosition])}
+        -- WSG's objective columns are captures then returns. These APIs are
+        -- optional; unreadable values stay absent without discarding the row.
+        if readFlags then
+            local captured = Adapter.Call(GetBattlefieldStatData, index, 1)
+            local returned = Adapter.Call(GetBattlefieldStatData, index, 2)
+            rows[index].flagsCaptured = captured and numberValue(captured[1]) or nil
+            rows[index].flagsReturned = returned and numberValue(returned[1]) or nil
+        end
     end
     problems.scoreboard = nil
     return rows

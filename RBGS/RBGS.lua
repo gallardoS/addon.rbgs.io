@@ -271,7 +271,7 @@ function app.HistoryText(index)
         local faction = row.observedTeamKey == "0" and "Horde" or row.observedTeamKey == "1" and "Alliance" or "Unknown team"
         lines[#lines+1] = row.character.name .. "  /  " .. faction
         local stats = {}
-        for _, field in ipairs({{"killingBlows","KB"},{"honorableKills","HK"},{"deaths","Deaths"},{"damage","Damage"},{"healing","Healing"}}) do
+        for _, field in ipairs({{"killingBlows","KB"},{"honorableKills","HK"},{"deaths","Deaths"},{"damage","Damage"},{"healing","Healing"},{"flagsCaptured","Flags captured"},{"flagsReturned","Flags returned"}}) do
             stats[#stats+1] = field[2] .. ": " .. (row[field[1]] ~= nil and tostring(row[field[1]]) or "Unknown")
         end
         lines[#lines+1] = "  " .. table.concat(stats, "  |  ")

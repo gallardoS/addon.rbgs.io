@@ -835,6 +835,43 @@ class ProductCaptureTests(unittest.TestCase):
         saved = self.saved(); self.boot(saved); self.anniversary()
         self.assertEqual(self.saved(), saved)
 
+    def test_wsg_flag_columns_are_persisted_with_zero_and_sorted_player_indices(self):
+        self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+        self.lua.execute('''function GetNumBattlefieldStats() return 2 end
+            function GetBattlefieldStatData(player, column)
+                if column==1 then return player-1 else return player+2 end
+            end''')
+        self.finish()
+        rows = self.last()["capture"]["roster"]
+        self.assertEqual([(r["flagsCaptured"],r["flagsReturned"]) for r in rows], [(0,3),(1,4)])
+        self.assertIn("Flags captured: 0", self.app.HistoryText(1))
+        saved = self.saved(); self.boot(saved); self.anniversary()
+        self.assertEqual(self.saved(), saved)
+
+    def test_flag_apis_are_optional_and_bad_values_stay_unknown(self):
+        for script in ('', 'function GetNumBattlefieldStats() error("unavailable") end',
+                       'function GetNumBattlefieldStats() return 1 end; function GetBattlefieldStatData() return 1 end',
+                       'function GetNumBattlefieldStats() return 3 end; function GetBattlefieldStatData() return 1 end',
+                       'function GetNumBattlefieldStats() return 2 end; function GetBattlefieldStatData() error("unavailable") end',
+                       'function GetNumBattlefieldStats() return 2 end; function GetBattlefieldStatData(_,c) if c==1 then return -1 else return "2" end end'):
+            with self.subTest(script=script):
+                self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+                self.lua.execute(script); self.finish()
+                self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+                for row in self.last()["capture"]["roster"]:
+                    self.assertNotIn("flagsCaptured",row); self.assertNotIn("flagsReturned",row)
+        self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+        self.lua.execute('function GetNumBattlefieldStats() return 2 end; function GetBattlefieldStatData(_,c) if c==2 then return 0 end end')
+        self.finish(); row=self.last()["capture"]["roster"][0]
+        self.assertNotIn("flagsCaptured", row); self.assertEqual(row["flagsReturned"],0)
+
+    def test_other_battleground_objectives_are_never_labeled_as_flags(self):
+        self.arm(); self.enter()
+        self.lua.execute('function GetNumBattlefieldStats() return 2 end; function GetBattlefieldStatData() error("must not read Darkspear objectives") end')
+        self.finish()
+        row = self.last()["capture"]["roster"][0]
+        self.assertNotIn("flagsCaptured", row); self.assertNotIn("flagsReturned", row)
+
     def test_anniversary_wrong_map_and_uncertain_reload_preserve_incomplete_attempts(self):
         self.anniversary(); self.command("test-wsg " + TOKEN)
         self.lua.execute('FixtureMapId=529')
@@ -973,6 +1010,7 @@ class ProductCaptureTests(unittest.TestCase):
         self.finish(); validator.validate(json_envelope(self.saved()))
         self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN)
         validator.validate(json_envelope(self.saved()))
+        self.lua.execute('function GetNumBattlefieldStats() return 2 end; function GetBattlefieldStatData(_,column) return column-1 end')
         self.enter(); self.finish(); validator.validate(json_envelope(self.saved()))
 
 

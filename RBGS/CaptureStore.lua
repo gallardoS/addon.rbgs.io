@@ -150,9 +150,9 @@ function Store.Valid(record)
         or c.map.profile ~= profile(client) or not text(c.map.observedName)
         or c.map.gameMapId ~= nil and not integer(c.map.gameMapId)) then return false end
     for _, row in ipairs(c.roster) do
-        if not keys(row, "|character|observedTeamKey|killingBlows|honorableKills|deaths|damage|healing|")
+        if not keys(row, "|character|observedTeamKey|killingBlows|honorableKills|deaths|damage|healing|flagsCaptured|flagsReturned|")
             or not identity(row.character) or row.observedTeamKey ~= nil and row.observedTeamKey ~= "0" and row.observedTeamKey ~= "1" then return false end
-        for _, key in ipairs({"killingBlows", "honorableKills", "deaths", "damage", "healing"}) do
+        for _, key in ipairs({"killingBlows", "honorableKills", "deaths", "damage", "healing", "flagsCaptured", "flagsReturned"}) do
             if row[key] ~= nil and not integer(row[key]) then return false end
         end
     end
