@@ -46,7 +46,12 @@ function Adapter.Client()
     for _, name in ipairs({"GetInstanceInfo", "UnitName", "GetRealmName", "GetNumBattlefieldScores", "GetBattlefieldScore", "GetBattlefieldWinner", "RequestBattlefieldScoreData"}) do
         if type(_G[name]) ~= "function" then return nil, "WoW cannot provide data needed to record matches: " .. name end
     end
-    return {addonVersion="0.2.0-test", adapterVersion="darkspear-scoreboard-v1", product="wow_classic_beta",
+    local anniversary = version:match("^2%.5%.") ~= nil
+    if anniversary and (not WOW_PROJECT_BURNING_CRUSADE_CLASSIC or WOW_PROJECT_ID ~= WOW_PROJECT_BURNING_CRUSADE_CLASSIC) then
+        return nil, "Cannot identify the TBC test client. Match recording is unavailable."
+    end
+    if not anniversary and not version:match("^1%.") then return nil, "This client is not supported for match recording." end
+    return {addonVersion="0.2.0-test", adapterVersion=anniversary and "tbc-anniversary-wsg-test-v1" or "darkspear-scoreboard-v1", product=anniversary and "wow_anniversary" or "wow_classic_beta",
         gameVersion=version, gameBuild=revision, interface=interface}
 end
 function Adapter.Identity()
@@ -57,6 +62,14 @@ function Adapter.Identity()
     -- GetRealmName supplies the realm independently; a missing surname stays unknown.
     local givenName = name and stringValue(name[1])
     local surname = name and stringValue(name[2])
+    if app.client and app.client.product == "wow_anniversary" then
+        -- Classic's second return is a realm, never a Forever surname.
+        if not givenName or not realm or not stringValue(realm[1]) then
+            return unreadable("identity", "Cannot read your character and realm for the WSG test.")
+        end
+        problems.identity = nil
+        return {name=givenName, realm=stringValue(realm[1]), guid=guid and stringValue(guid[1])}
+    end
     if not givenName or not surname or name.count ~= 2 then
         return unreadable("identity", "Cannot read your full character name. Match recording is unavailable.")
     end
@@ -73,7 +86,7 @@ function Adapter.Context()
     if not stringValue(values[1]) or not numberValue(values[8]) then
         return unreadable("context", "Cannot read the battleground name or map ID.")
     end
-    return true, {profile="DARKSPEAR_DIAGNOSTIC", observedName=stringValue(values[1]), gameMapId=numberValue(values[8])}
+    return true, {profile=app.client and app.client.product == "wow_anniversary" and "TBC_ANNIVERSARY_WSG_TEST" or "DARKSPEAR_DIAGNOSTIC", observedName=stringValue(values[1]), gameMapId=numberValue(values[8])}
 end
 function Adapter.Time()
     local stamp = Adapter.Call(GetServerTime)
@@ -95,6 +108,10 @@ function Adapter.Roster()
     local count = Adapter.Call(GetNumBattlefieldScores)
     local total = count and numberValue(count[1])
     if not total or total > 40 then return unreadable("scoreboard", "Cannot read the number of players in the scoreboard.") end
+    -- TBC retains rank at position 7, so classToken is 10 and damage/healing
+    -- are 11/12. Forever's observed 70338 layout uses damage/healing at 10/11.
+    local damagePosition = app.client and app.client.product == "wow_anniversary" and 11 or 10
+    local healingPosition = damagePosition + 1
     local rows = {}
     for index = 1, total do
         local values = Adapter.Call(GetBattlefieldScore, index)
@@ -105,7 +122,7 @@ function Adapter.Roster()
         local character, realm = name:match("^([^%-]+)%-(.+)$")
         local team = numberValue(values[6])
         if not optionalTeam(values[6]) then return unreadable("scoreboard", "Cannot read the teams in the scoreboard.") end
-        for _, position in ipairs({2, 3, 4, 10, 11}) do
+        for _, position in ipairs({2, 3, 4, damagePosition, healingPosition}) do
             if not optionalNumber(values[position]) then
                 return unreadable("scoreboard", "Cannot read the scoreboard statistics. Your saved match data is kept.")
             end
@@ -113,7 +130,7 @@ function Adapter.Roster()
         rows[index] = {character={name=character or name, realm=realm},
             observedTeamKey=(team == 0 or team == 1) and tostring(team) or nil,
             killingBlows=numberValue(values[2]), honorableKills=numberValue(values[3]), deaths=numberValue(values[4]),
-            damage=numberValue(values[10]), healing=numberValue(values[11])}
+            damage=numberValue(values[damagePosition]), healing=numberValue(values[healingPosition])}
     end
     problems.scoreboard = nil
     return rows

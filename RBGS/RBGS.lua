@@ -137,7 +137,7 @@ local reasonLabels = {
 function app.Status()
     if not app.store then return "Waiting for the addon to load." end
     if app.store.error then return app.store.error end
-    local lines = {app.adapterError or app.eventError or Adapter.Problem() or "Darkspear test matches. Tests do not change your rating.",
+    local lines = {app.adapterError or app.eventError or Adapter.Problem() or (app.client and app.client.product == "wow_anniversary" and "Temporary TBC Anniversary WSG capture test. Results are unverified. rbgs.io is for Forever only." or "Darkspear test matches. Tests do not change your rating."),
         "Check upload status in the companion.", "Saved recordings: " .. #app.store.root.captures .. " / 8"}
     for _, record in ipairs(app.store.root.captures) do
         local c = record.capture
@@ -166,7 +166,8 @@ function app.ResultSaveState()
     if not currentCaptureId or not app.store or app.store.error then return false, false end
     local inBG, map = Adapter.Context()
     local winner, readable = Adapter.Winner()
-    if inBG ~= true or not map or map.gameMapId ~= 2997 or not readable or (winner ~= 0 and winner ~= 1) then return false, false end
+    local expectedMap = app.client and app.client.product == "wow_anniversary" and 489 or 2997
+    if inBG ~= true or not map or map.gameMapId ~= expectedMap or not readable or (winner ~= 0 and winner ~= 1) then return false, false end
     for _, record in ipairs(app.store.root.captures) do
         if record.captureId == currentCaptureId then
             if record.capture.stage == "FINAL_PENDING" or record.capture.stage == "RECORDING" then
@@ -176,6 +177,7 @@ function app.ResultSaveState()
                 return false, false
             end
             if not record.capture.map or record.capture.map.gameMapId ~= map.gameMapId
+                or record.capture.map.profile ~= map.profile or record.client.product ~= app.client.product
                 or record.capture.outcome.winningObservedTeamKey ~= tostring(winner) then return false, false end
             local combat = Adapter.Call(InCombatLockdown)
             if not combat or combat[1] then return true, false, "Leave combat before saving results." end
@@ -230,9 +232,12 @@ SLASH_RBGS1 = "/rbgs"
 SlashCmdList.RBGS = function(command)
     local action, argument = (command or ""):match("^%s*(%S*)%s*(.-)%s*$")
     action = action:lower()
-    if action == "match" then
+    if action == "match" or action == "test-wsg" then
         if not loggedIn or not app.store then app.Message("Wait for your character to log in before entering the match command."); return end
         if app.adapterError or app.eventError then app.Message(app.adapterError or app.eventError); return end
+        if (action == "test-wsg") ~= (app.client and app.client.product == "wow_anniversary") then
+            app.Message("Copy the command for this client from the companion. TBC Anniversary accepts only explicit WSG test commands."); return
+        end
         updateContext()
         local _, message = app.store:Arm(argument, Adapter.Identity(), app.client, Adapter.Context())
         app.Message(message); refresh()
@@ -246,5 +251,5 @@ SlashCmdList.RBGS = function(command)
     elseif action == "reload" then app.Reload()
     elseif action == "history" then if app.ShowHistory then app.ShowHistory() end
     elseif action == "" or action == "show" then if app.ShowPanel then app.ShowPanel() end
-    else app.Message("Commands: match <token>, status, history, show, cancel, reload. Saved match data cannot be deleted here.") end
+    else app.Message("Commands: match <token>, test-wsg <token>, status, history, show, cancel, reload. Saved match data cannot be deleted here.") end
 end

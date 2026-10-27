@@ -637,6 +637,136 @@ class ProductCaptureTests(unittest.TestCase):
         self.assertEqual(self.saved()["captures"], {})
 
 
+    def classic_scoreboard(self):
+        self.lua.execute('''WorldStateScoreFrame=CreateFrame("Frame", "WorldStateScoreFrame", UIParent)
+            WorldStateScoreFrameLeaveButton=CreateFrame("Button", "WorldStateScoreFrameLeaveButton", WorldStateScoreFrame)
+            WorldStateScoreFrameLeaveButton:SetSize(153,21)
+            WorldStateScoreFrameLeaveButton:SetScript("OnClick",function() FixtureLeft=true end)
+            WorldStateScoreFrame:SetScript("OnShow",function() WorldStateScoreFrameLeaveButton:Show() end)''')
+
+    def test_anniversary_scoreboard_saves_reloads_and_reopens_classic_exit_once(self):
+        self.anniversary(); self.command("test-wsg " + TOKEN); self.enter(); self.classic_scoreboard()
+        self.lua.execute('FixtureWinner=0; fire("PVP_MATCH_COMPLETE"); tick(0.5)')
+        button = self.lua.globals().RBGSScoreboardSaveResults
+        self.assertTrue(button.shown)
+        self.assertFalse(button.enabled)
+        self.assertFalse(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        self.lua.execute('FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE"); tick(0.5)')
+        self.assertTrue(button.enabled)
+        self.assertEqual(button.text, "rbgs.io: Save results")
+        self.assertEqual(button.point[1], "CENTER")
+        self.lua.execute('WorldStateScoreFrameLeaveButton:Show()')
+        self.assertFalse(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        saved = self.saved()
+        self.lua.execute('click(RBGSScoreboardSaveResults)')
+        self.assertTrue(self.lua.globals().FixtureReloaded)
+        self.assertFalse(bool(self.lua.globals().FixtureLeft))
+        self.assertEqual(self.saved(), saved)
+        settings = data(self.lua.globals().RBGSSettings)
+        self.assertEqual(settings["reopenResults"]["captureId"], self.last()["captureId"])
+        self.boot(saved, settings); self.anniversary(); self.classic_scoreboard()
+        self.lua.execute('''WorldStateScoreFrame:Hide(); FixtureInstanceType="pvp"; FixtureWinner=0; FixtureScoreCount=2
+            function LeaveBattlefield() error("never leave automatically") end
+            fire("PLAYER_ENTERING_WORLD",false,true); tick(0.5)''')
+        self.assertTrue(self.lua.globals().WorldStateScoreFrame.shown)
+        self.assertTrue(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.assertIsNone(self.lua.globals().RBGSSettings.reopenResults)
+        self.assertEqual(self.saved(), saved)
+        self.lua.execute('WorldStateScoreFrame:Hide(); tick(2)')
+        self.assertFalse(self.lua.globals().WorldStateScoreFrame.shown)
+        self.lua.execute('WorldStateScoreFrame:Show(); click(WorldStateScoreFrameLeaveButton)')
+        self.assertTrue(self.lua.globals().FixtureLeft)
+
+    def test_anniversary_scoreboard_leaves_native_exit_for_unassigned_wrong_map_and_combat(self):
+        self.anniversary(); self.classic_scoreboard(); self.lua.execute('tick(0.5)')
+        self.assertTrue(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        self.assertIsNone(self.lua.globals().RBGSScoreboardSaveResults)
+        self.command("test-wsg " + TOKEN); self.enter(); self.finish()
+        self.lua.execute('FixtureCombat=true; tick(0.5)')
+        self.assertTrue(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        self.lua.execute('FixtureCombat=false; tick(0.5)')
+        self.assertTrue(self.lua.globals().RBGSScoreboardSaveResults.enabled)
+        self.lua.execute('FixtureCombat=true; click(RBGSScoreboardSaveResults)')
+        self.assertFalse(bool(self.lua.globals().FixtureReloaded))
+        self.lua.execute('FixtureCombat=false; FixtureMapId=529; fire("PLAYER_ENTERING_WORLD"); tick(0.5)')
+        self.assertTrue(self.lua.globals().WorldStateScoreFrameLeaveButton.shown)
+        self.assertFalse(self.lua.globals().RBGSScoreboardSaveResults.shown)
+
+    def anniversary(self):
+        self.lua.execute('''WOW_PROJECT_BURNING_CRUSADE_CLASSIC=5; WOW_PROJECT_ID=5
+            function GetBuildInfo() return "2.5.6", "70006", "fixture", 20506 end
+            function UnitName() return "SyntheticHorde", "OtherRealm" end
+            function GetBattlefieldScore(index)
+                return index == 1 and "SyntheticHorde-Fixture Realm" or "SyntheticAlliance-Other Realm",
+                    8, 63, 2, 100, index == 1 and 0 or 1, 0, "Blood Elf", "Paladin", "PALADIN", 31097, 384
+            end
+            FixtureMapName="Warsong Gulch"; FixtureMapId=489; fire("PLAYER_LOGIN")''')
+
+    def test_anniversary_requires_explicit_test_command_and_preserves_actual_identity(self):
+        self.anniversary()
+        self.arm()
+        self.assertEqual(self.saved()["captures"], {})
+        self.command("test-wsg " + TOKEN)
+        self.assertEqual(self.last()["observedCharacter"]["name"], "SyntheticHorde")
+        self.assertNotIn("OtherRealm", self.last()["observedCharacter"]["name"])
+        self.enter(); self.finish()
+        record = self.last()
+        self.assertEqual(record["capture"]["stage"], "COMPLETE")
+        self.assertEqual(record["capture"]["map"]["profile"], "TBC_ANNIVERSARY_WSG_TEST")
+        self.assertEqual(record["client"]["product"], "wow_anniversary")
+        self.assertEqual(record["client"]["gameBuild"], "70006")
+        self.assertEqual(record["capture"]["roster"][0]["character"]["name"], "SyntheticHorde")
+        self.assertEqual(record["capture"]["roster"][0]["damage"], 31097)
+        self.assertEqual(record["capture"]["roster"][0]["healing"], 384)
+        saved = self.saved(); self.boot(saved); self.anniversary()
+        self.assertEqual(self.saved(), saved)
+
+    def test_anniversary_wrong_map_and_uncertain_reload_preserve_incomplete_attempts(self):
+        self.anniversary(); self.command("test-wsg " + TOKEN)
+        self.lua.execute('FixtureMapId=529')
+        self.enter()
+        self.assertEqual(self.last()["capture"]["incompleteReason"], "MAP_MISMATCH")
+        self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+        saved = self.saved(); self.boot(saved)
+        self.assertEqual(self.last()["capture"]["state"], "INCOMPLETE")
+        self.assertEqual(self.last()["client"]["product"], "wow_anniversary")
+
+    def test_anniversary_class_token_is_not_a_stat_and_optional_numbers_keep_their_meaning(self):
+        self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+        # The reported real TBC tuple has 3/55/8 at 2/3/4, PALADIN at 10,
+        # and 39820 at 11. Healing below is synthetic, not inferred from damage.
+        self.lua.execute('''function GetBattlefieldScore()
+            return "Synthetic-Fixture Realm",3,55,8,100,0,0,"Blood Elf","Paladin","PALADIN",39820,nil
+        end''')
+        self.finish()
+        row = self.last()["capture"]["roster"][0]
+        self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+        self.assertEqual([row["killingBlows"],row["honorableKills"],row["deaths"],row["damage"]], [3,55,8,39820])
+        self.assertNotIn("healing", row)
+        for damage, healing in (("0", "0"), ("nil", "384")):
+            self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+            self.lua.execute('function GetBattlefieldScore() return "Synthetic",3,55,8,100,0,0,"Blood Elf","Paladin","PALADIN",' + damage + ',' + healing + ' end')
+            self.finish()
+            row = self.last()["capture"]["roster"][0]
+            self.assertEqual(self.last()["capture"]["stage"], "COMPLETE")
+            self.assertEqual(row.get("damage"), None if damage == "nil" else 0)
+            self.assertEqual(row["healing"], int(healing))
+
+    def test_anniversary_rejects_bad_stats_at_its_own_positions(self):
+        for damage, healing in (('"shifted"', "0"), ("0", '"shifted"'), ("-1", "0")):
+            self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN); self.enter()
+            self.lua.execute('function GetBattlefieldScore() return "Synthetic",3,55,8,100,0,0,"Blood Elf","Paladin","PALADIN",' + damage + ',' + healing + ' end')
+            self.finish()
+            self.assertEqual(self.last()["capture"]["stage"], "FINAL_PENDING")
+            self.assertIn("statistics", self.app.Adapter.Problem())
+            self.lua.execute('tick(31)')
+            self.assertEqual(self.last()["capture"]["stage"], "INCOMPLETE")
+
+    def test_forever_rejects_temporary_test_command(self):
+        self.command("test-wsg " + TOKEN)
+        self.assertEqual(self.saved()["captures"], {})
+
     def test_missing_required_api_prevents_arming_with_specific_reason(self):
         for name in ("GetBattlefieldScore", "GetBattlefieldWinner", "RequestBattlefieldScoreData"):
             with self.subTest(api=name):
@@ -724,6 +854,9 @@ class ProductCaptureTests(unittest.TestCase):
         validator.validate(json_envelope(self.saved()))
         fixture = json.loads((ROOT / "tools" / "fixtures" / "capture-70338-final.sanitized.json").read_text(encoding="utf-8"))
         validator.validate(json_envelope(fixture))
+        self.boot(); self.anniversary(); self.command("test-wsg " + TOKEN)
+        validator.validate(json_envelope(self.saved()))
+        self.enter(); self.finish(); validator.validate(json_envelope(self.saved()))
 
 
 if __name__ == "__main__":

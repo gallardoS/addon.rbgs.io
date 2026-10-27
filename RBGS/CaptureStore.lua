@@ -120,6 +120,10 @@ local reasons = { CAPTURE_PENDING=true, MAP_MISMATCH=true, CHARACTER_CHANGED=tru
     SESSION_BOUNDARY_UNCERTAIN=true, MISSING_FINAL_OUTCOME=true, MISSING_REQUIRED_DATA=true,
     UNSUPPORTED_ADAPTER=true, STORAGE_FULL=true, CANCELLED=true }
 local pending = { ARMED=true, RECORDING=true, FINAL_PENDING=true }
+local function profile(client)
+    if client.product == "wow_classic_beta" then return "DARKSPEAR_DIAGNOSTIC", 2997 end
+    if client.product == "wow_anniversary" and client.adapterVersion == "tbc-anniversary-wsg-test-v1" then return "TBC_ANNIVERSARY_WSG_TEST", 489 end
+end
 function Store.Valid(record)
     if not keys(record, "|captureId|captureRevision|assignmentCode|client|observedCharacter|capture|")
         or not uuid(record.captureId) or not code(record.assignmentCode)
@@ -127,14 +131,14 @@ function Store.Valid(record)
         or not identity(record.observedCharacter) then return false end
     local client, c = record.client, record.capture
     if not keys(client, "|addonVersion|adapterVersion|product|gameVersion|gameBuild|interface|")
-        or not text(client.addonVersion) or not text(client.adapterVersion) or client.product ~= "wow_classic_beta"
+        or not text(client.addonVersion) or not text(client.adapterVersion) or not profile(client)
         or not gameVersion(client.gameVersion) or not gameBuild(client.gameBuild)
         or not integer(client.interface) or client.interface == 0 then return false end
     if not keys(c, "|state|stage|continuity|incompleteReason|map|startedAt|endedAt|roster|outcome|")
         or not array(c.roster, 40) or c.continuity ~= "CONTINUOUS" and c.continuity ~= "UNKNOWN"
         or c.startedAt ~= nil and not timestamp(c.startedAt) or c.endedAt ~= nil and not timestamp(c.endedAt) then return false end
     if c.map ~= nil and (not keys(c.map, "|profile|observedName|gameMapId|")
-        or c.map.profile ~= "DARKSPEAR_DIAGNOSTIC" or not text(c.map.observedName)
+        or c.map.profile ~= profile(client) or not text(c.map.observedName)
         or c.map.gameMapId ~= nil and not integer(c.map.gameMapId)) then return false end
     for _, row in ipairs(c.roster) do
         if not keys(row, "|character|observedTeamKey|killingBlows|honorableKills|deaths|damage|healing|")
@@ -214,7 +218,7 @@ function Store:Arm(token, character, client, inBG)
         capture={state="INCOMPLETE", stage="ARMED", continuity="CONTINUOUS", incompleteReason="CAPTURE_PENDING", roster={}, outcome={kind="UNKNOWN"}}}
     if not Store.Size(record) or not Store.Valid(record) then return false, "Cannot read the character or game details needed to record this match." end
     self.root.captures[#self.root.captures + 1] = record
-    return true, "Ready to record your next Darkspear test match. Enter the battleground. Do not use /reload while recording."
+    return true, "Ready to record your next " .. (client.product == "wow_anniversary" and "WSG" or "Darkspear") .. " test match. Enter the battleground. Do not use /reload while recording."
 end
 function Store:Fail(reason, at, continuity)
     local record, index = self:Active()
@@ -236,7 +240,8 @@ function Store:Enter(character, map, at, cleanEntry)
     local record, index = self:Active()
     if not record or record.capture.stage ~= "ARMED" then return end
     if not equal(record.observedCharacter, character) then return self:Fail("CHARACTER_CHANGED", at) end
-    if not map or map.profile ~= "DARKSPEAR_DIAGNOSTIC" or map.gameMapId ~= 2997 then return self:Fail("MAP_MISMATCH", at) end
+    local expected, mapId = profile(record.client)
+    if not map or map.profile ~= expected or map.gameMapId ~= mapId then return self:Fail("MAP_MISMATCH", at) end
     if not cleanEntry then return self:Fail("SESSION_BOUNDARY_UNCERTAIN", at, "UNKNOWN") end
     if not timestamp(at) or not text(map.observedName) then return self:Fail("MISSING_REQUIRED_DATA", at) end
     local candidate = copy(record)

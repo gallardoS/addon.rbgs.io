@@ -31,6 +31,7 @@ function app.PrepareResultsReload()
     local now = timestamp()
     if not now then return end
     if type(RBGSSettings) ~= "table" then RBGSSettings = {} end
+    -- UI intent only, separate from immutable match evidence and without any command/code.
     RBGSSettings.reopenResults = {schema=1, captureId=record.captureId, revision=record.captureRevision, requestedAt=now}
 end
 local function hook(frame, event)
@@ -71,6 +72,7 @@ local function refresh()
     if board ~= parent or leave ~= anchor then showOriginal(); return end
     button:SetText(saving and "rbgs.io: Saving results..." or ready and "rbgs.io: Save results" or "rbgs.io: Reading results...")
     button:SetEnabled(ready and not saving)
+    -- Preserve the native exit's position, text and click handler for after the reload.
     button:Show()
     hiddenLeave = anchor
     anchor:Hide()
@@ -101,13 +103,14 @@ local function reopen(delta)
     reopenElapsed = reopenElapsed + delta
     local record = restoredRecord()
     if not record or reopenElapsed > 15 then pending = nil; return end
+    if not app.client or record.client.product ~= app.client.product then pending = nil; return end
     local identity = app.Adapter.Identity()
     if not identity then return end
     local character = record.observedCharacter
     if character.name ~= identity.name or character.realm ~= identity.realm or character.guid ~= identity.guid then pending = nil; return end
     local inBG, map = app.Adapter.Context()
     local winner, readable = app.Adapter.Winner()
-    if inBG and (map.gameMapId ~= record.capture.map.gameMapId
+    if inBG and (map.gameMapId ~= record.capture.map.gameMapId or map.profile ~= record.capture.map.profile
         or readable and winner ~= nil and tostring(winner) ~= record.capture.outcome.winningObservedTeamKey) then
         pending = nil; return
     end
@@ -116,7 +119,7 @@ local function reopen(delta)
     local roster = app.Adapter.Roster()
     if not roster or #roster == 0 then return end
     local parent = target()
-    if not parent and not loadAttempted then
+    if not parent and not loadAttempted and app.client.product ~= "wow_anniversary" then
         loadAttempted = true
         app.Adapter.Call(UIParentLoadAddOn, "Blizzard_PVPMatch")
         parent = target()
@@ -139,7 +142,7 @@ watcher:SetScript("OnEvent", function(_, event, first, isReloadingUI)
     if event == "ADDON_LOADED" and first == addonName then
         if type(RBGSSettings) == "table" then
             pending = RBGSSettings.reopenResults
-            RBGSSettings.reopenResults = nil
+            RBGSSettings.reopenResults = nil -- Consume before any attempt; never reopen on a later login.
         end
     elseif event == "PLAYER_ENTERING_WORLD" and pending then
         if first == true or isReloadingUI ~= true then pending = nil; return end

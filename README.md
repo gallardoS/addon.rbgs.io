@@ -48,3 +48,20 @@ python -m unittest discover -s tools -p test_product_capture.py
 ```
 
 Product tests cover successive games, frozen revisions, reloads, wrong map/character, stale scoreboards, persistence, capacity, history and debugger isolation. Optional contract validation uses `RBGS_CAPTURE_SCHEMA_PATH` with `jsonschema` installed; local specifications are not part of this repository.
+
+
+## Temporary TBC Anniversary WSG tests
+
+rbgs.io targets WoW: Forever. While its beta is closed, developers can explicitly
+run capture-only tests in TBC Anniversary Warsong Gulch (map 489). Install RBGS
+in the Anniversary client; RBGS_TBC.toc declares interface 20506. Client/build
+metadata and Classic character/realm identity are kept separate from Forever.
+
+Copy the companion-issued `/rbgs test-wsg RB2:<captureId>:<assignmentCode>` command
+before entering WSG. `/rbgs match` remains the Forever command. The TBC adapter
+reads damage/healing at positions 11/12; Forever retains positions 10/11.
+After the final scoreboard is recorded, click **rbgs.io: Save results** in place
+of the native exit. It saves through a reload, reopens the Classic scoreboard
+once, and restores the original exit button. You still choose when to leave.
+Reloading before completion retains an incomplete attempt; use a new test command
+for another game. These temporary tests do not verify outcomes or change ratings.
