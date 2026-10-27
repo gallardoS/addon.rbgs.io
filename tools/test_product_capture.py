@@ -980,6 +980,20 @@ class ProductCaptureTests(unittest.TestCase):
         self.finish(); self.lua.execute('FixtureCombat=true'); self.command("reload")
         self.assertIsNone(self.lua.globals().FixtureReloaded)
 
+    def test_minimap_collector_can_own_position_without_breaking_panel_clicks(self):
+        self.assertTrue(self.lua.eval('RBGSMinimapButton == RBGSProductLauncher'))
+        self.assertTrue(self.lua.eval('RBGSMinimapButton.parent == Minimap'))
+        self.lua.execute('''local button = RBGSMinimapButton
+            button.parent = CreateFrame("Frame", "FixtureButtonContainer", UIParent)
+            button:SetPoint("CENTER", button.parent, "CENTER", 0, 0)
+            FixtureCollectorPoint = button.point
+            fire("PLAYER_LOGIN")
+            button.scripts.OnDragStart(button)''')
+        self.assertTrue(self.lua.eval('RBGSMinimapButton.point == FixtureCollectorPoint'))
+        self.assertIsNone(self.lua.globals().RBGSMinimapButton.scripts.OnUpdate)
+        self.lua.execute('click(RBGSMinimapButton)')
+        self.assertTrue(self.lua.globals().RBGSProductPanel.shown)
+
     def test_debugger_clear_does_not_touch_product_captures(self):
         self.arm(); self.enter(); self.finish(); snapshot = self.saved()
         ns = self.lua.table()
