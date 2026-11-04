@@ -1,8 +1,8 @@
 # addon.rbgs.io
 
-WoW: Forever addons for rbgs.io. `RBGSCompatibility/` is displayed in-game as **rbgs.io Debugger** and targets interface 16001. It records bounded diagnostic observations; it does not verify matches or upload data.
+Players install only `RBGS/`, displayed in WoW as **rbgs.io**. It records assigned match data for the companion. `RBGSCompatibility/`, displayed as **rbgs.io Debugger**, is an optional developer tool for investigating game APIs and compatibility. It is not required by players or by the companion's normal match workflow.
 
-## Local installation
+## Optional developer debugger installation
 
 Copy `RBGSCompatibility/` into `<World of Warcraft>/_classic_beta_/Interface/AddOns/`, restart WoW and enable **rbgs.io Debugger**. The red minimap button opens the panel; left-click toggles it and drag repositions it. `/rbgsprobe` also opens the panel. Per-character `RBGSDebuggerSettings` stores the minimap position.
 
@@ -10,7 +10,7 @@ The panel supports manual capture, capability inspection and automatic BG entry/
 
 **Clear history** clears diagnostic records and requires an out-of-combat reload. The panel preserves history when reload is unavailable or fails. Capture history is bounded to 300 records; unavailable statistics remain unknown.
 
-The red debugger logo is a 256×256 RGBA TGA texture in `RBGSCompatibility/Media/`; its PNG source is in `branding/`. The internal addon name and SavedVariables root remain compatible with previous diagnostic captures.
+The red debugger logo is a 256x256 RGBA TGA texture in `RBGSCompatibility/Media/`; its PNG source is in `branding/`. The internal addon name and SavedVariables root remain compatible with previous diagnostic captures.
 
 ## Verification
 
@@ -25,9 +25,9 @@ Tests use synthetic WoW APIs. The optional companion-parser integration requires
 
 ## Product addon
 
-Copy `RBGS/` into the beta client's `Interface/AddOns/`, restart WoW and enable **rbgs.io**. The debugger can remain enabled. The product uses the original logo and separate per-character `RBGSSettings` for its minimap button.
+Copy `RBGS/` into the beta client's `Interface/AddOns/`, restart WoW and enable **rbgs.io**. Developers may keep the separate debugger enabled; players do not need it. The product uses the original logo and separate per-character `RBGSSettings` for its minimap button.
 
-The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`2997`). It checks required game functions and bounded name, map, result and scoreboard data instead of rejecting a new build number. Actual game version, build and interface are saved with each capture. Missing optional statistics remain unknown; unreadable required data cannot produce a completed capture. WoW's own addon-loading Interface metadata may still need updating after an interface change. Before entering the BG, paste the assignment command issued by the companion:
+The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`2997`). It checks required game functions and bounded name, map, result and scoreboard data instead of rejecting a new build number. Actual game version, build and interface are saved with each capture. Missing optional statistics remain unknown; unreadable required data cannot produce a completed capture. Temporary TBC Anniversary WSG tests also record per-player flags captured and returned from the battleground objective columns when available; missing or unreadable objectives stay unknown. Historical captures are not backfilled. WoW's own addon-loading Interface metadata may still need updating after an interface change. Before entering the BG, paste the assignment command issued by the companion:
 
 ```text
 /rbgs match RB2:<captureId>:<assignmentCode>
@@ -35,7 +35,7 @@ The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`29
 
 The capture ID is a UUID; the assignment code is 16 uppercase Crockford-base32 characters. The addon observes the next supported BG and never imports a previous scoreboard. `/rbgs status` displays attempts; `/rbgs cancel` terminates and retains the active attempt. Codes are excluded from status/chat output.
 
-After the final result, remain in the BG until status is `COMPLETE`, then use `/reload` or **Save / reload**. A mid-match `/reload` can resume the same capture when character, client, map and the battleground clock match a recent saved checkpoint. Resumed captures retain interruption timestamps and require a fresh final scoreboard update; uncertain recovery remains `INCOMPLETE / SESSION_BOUNDARY_UNCERTAIN`. The save button guards active capture; no reload happens automatically. Wrong map, changed character, early exit and unavailable final results retain incomplete attempts.
+After the final result, remain in the BG until the recording is complete. During an assigned recording, **rbgs.io: Save results** temporarily replaces the scoreboard Leave match button in the same position. Click it when enabled. It uses the native WoW button style, waits for the final recording and refuses to reload in combat. Its tooltip explains that reloading saves the data for the companion to upload. After this reload, the addon reopens the final scoreboard once with the original **Leave match** button available. Leaving still requires your click. The same save/reload/reopen flow applies to the explicit TBC Anniversary WSG test, using the Classic scoreboard and its original exit button. The short-lived reopen request belongs to the completed capture and is consumed on load; it does not reopen on normal login or another game. Capture/reload/UI failures restore the native exit. Unassigned battlegrounds keep their normal exit. This does not report an upload receipt. If the scoreboard is unavailable, use `/reload`, **Save / reload** in the addon panel, or log out. A mid-match `/reload` can resume the same capture when character, client, map and the battleground clock match a fresh saved checkpoint. Reload gaps are retained as `RESUMED` continuity with interruption timestamps; the final scoreboard still requires a fresh update. A normal login, missing or inconsistent checkpoint, a reload longer than 120 seconds, or more than 32 interruptions ends the attempt as `INCOMPLETE / SESSION_BOUNDARY_UNCERTAIN`. Old terminal attempts stay frozen. The save button guards active capture; no reload happens automatically. Wrong map, changed character, early exit and unavailable final results retain incomplete attempts.
 
 **Completed matches** or `/rbgs history` displays completed captures newest first. **Newer/Older** navigates map, UTC times, winning faction, roster and observed statistics. Unknown values stay unknown. Completed snapshots are frozen under their own ID/revision; history does not verify or erase them.
 
@@ -48,35 +48,3 @@ python -m unittest discover -s tools -p test_product_capture.py
 ```
 
 Product tests cover successive games, frozen revisions, reloads, wrong map/character, stale scoreboards, persistence, capacity, history and debugger isolation. Optional contract validation uses `RBGS_CAPTURE_SCHEMA_PATH` with `jsonschema` installed; local specifications are not part of this repository.
-
-
-## Temporary TBC Anniversary WSG tests
-
-rbgs.io targets WoW: Forever. While its beta is closed, developers can explicitly
-run capture-only tests in TBC Anniversary Warsong Gulch (map 489). Install RBGS
-in the Anniversary client; RBGS_TBC.toc declares interface 20506. Client/build
-metadata and Classic character/realm identity are kept separate from Forever.
-
-Copy the companion-issued `/rbgs test-wsg RB2:<captureId>:<assignmentCode>` command
-before entering WSG. `/rbgs match` remains the Forever command. The TBC adapter
-reads damage/healing at positions 11/12; Forever retains positions 10/11.
-After the final scoreboard is recorded, click **rbgs.io: Save results** in place
-of the native exit. It saves through a reload, reopens the Classic scoreboard
-once, and restores the original exit button. You still choose when to leave.
-A mid-match reload can resume a validated recent checkpoint; uncertain recovery
-retains an incomplete attempt. Use a new test command for another game. These temporary tests do not verify outcomes or change ratings.
-
-
-## Reload recovery
-
-Before a reload, the addon saves a per-character checkpoint bound to the active
-capture ID/revision, server time, battleground runtime and available instance
-number. Only a real UI reload can resume it, after checking the same character,
-client and map plus coherent clocks within 120 seconds. Normal logins, missing
-checkpoints or uncertain continuity preserve an incomplete attempt.
-
-Recovered attempts use `RESUMED` continuity and retain up to 32 ordered
-interruption timestamp pairs. Start time, previous roster and capture identity
-are preserved; a fresh final scoreboard is required before completion. Finished
-or previously incomplete attempts stay immutable. Use current companion/API
-versions that support resumed captures before uploading them.
