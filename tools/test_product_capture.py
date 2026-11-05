@@ -27,7 +27,7 @@ function GetBattlefieldScore(index)
         8, FixtureUnknownHK and nil or 63, 2, 100, index == 1 and 0 or 1, "unused", "unused", "unused", 31097, 0
 end
 function command(value) SlashCmdList.RBGS(value) end
-function loadProduct(source, ns) assert(loadstring(source))("RBGS", ns) end
+function loadProduct(source, ns) assert(loadstring(source))("rbgs.io", ns) end
 Messages={}
 DEFAULT_CHAT_FRAME={AddMessage=function(_, message) Messages[#Messages+1]=message end}
 '''
@@ -85,8 +85,8 @@ class ProductCaptureTests(unittest.TestCase):
                 self.lua.globals().RBGSSettings = table(settings)
         self.app = self.lua.table()
         for name in ("CaptureStore.lua", "ForeverAdapter.lua", "RBGS.lua", "Panel.lua", "ScoreboardButton.lua"):
-            self.lua.globals().loadProduct((ROOT / "RBGS" / name).read_text(encoding="utf-8"), self.app)
-        self.lua.execute('fire("ADDON_LOADED", "RBGS"); fire("PLAYER_LOGIN")')
+            self.lua.globals().loadProduct((ROOT / "rbgs.io" / name).read_text(encoding="utf-8"), self.app)
+        self.lua.execute('fire("ADDON_LOADED", "rbgs.io"); fire("PLAYER_LOGIN")')
 
     def command(self, value):
         self.lua.globals().command(value)

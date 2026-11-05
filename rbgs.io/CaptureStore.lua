@@ -175,12 +175,12 @@ function Store.New(root)
     local self = setmetatable({root=root}, {__index=Store})
     if root == nil then self.root = {schema=2, captures={}}; return self end
     if not keys(root, "|schema|captures|") or root.schema ~= 2 or not array(root.captures, Store.MAX_CAPTURES) then
-        self.error = "This saved match format is not supported. Your data is kept. Back up RBGS.lua before getting help."; return self
+        self.error = "This saved match format is not supported. Your data is kept. Back up rbgs.io.lua before getting help."; return self
     end
     local ids, active = {}, 0
     for _, record in ipairs(root.captures) do
         if not Store.Size(record) or not Store.Valid(record) or ids[record.captureId:lower()] then
-            self.error = "Cannot read your saved match data. Your data is kept. Back up RBGS.lua before getting help."; return self
+            self.error = "Cannot read your saved match data. Your data is kept. Back up rbgs.io.lua before getting help."; return self
         end
         ids[record.captureId:lower()] = true
         if pending[record.capture.stage] then active = active + 1 end

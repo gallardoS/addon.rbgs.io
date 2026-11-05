@@ -18,7 +18,7 @@ with Image.open(args.source) as source:
     original.parent.mkdir(parents=True, exist_ok=True)
     source.save(original, optimize=True)
     texture = source.resize((256, 256), Image.Resampling.LANCZOS)
-    for addon in ('RBGS', 'RBGSCompatibility'):
+    for addon in ('rbgs.io', 'RBGSCompatibility'):
         destination = root / addon / 'Media/logo.tga'
         destination.parent.mkdir(parents=True, exist_ok=True)
         selected_texture = texture

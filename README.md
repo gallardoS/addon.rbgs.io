@@ -1,6 +1,8 @@
 # addon.rbgs.io
 
-Players install only `RBGS/`, displayed in WoW as **rbgs.io**. It records assigned match data for the companion. `RBGSCompatibility/`, displayed as **rbgs.io Debugger**, is an optional developer tool for investigating game APIs and compatibility. It is not required by players or by the companion's normal match workflow.
+Product directory rename (2026-11-05): install `rbgs.io/`, with `rbgs.io.toc` for Forever and `rbgs.io_TBC.toc` for the temporary TBC tests. WoW now saves product data to `SavedVariables/rbgs.io.lua`. Lua globals `RBGSMatchData`/`RBGSSettings`, `/rbgs`, and the schema stay unchanged. Remove the previous `RBGS/` installation when switching so both addons cannot load together, then fully restart WoW. Existing `RBGS.lua` data is not automatically migrated; this installation intentionally starts fresh. The updated companion supports both layouts and uses only `rbgs.io.lua` when the new addon folder is present.
+
+Players install only `rbgs.io/`, displayed in WoW as **rbgs.io**. It records assigned match data for the companion. `RBGSCompatibility/`, displayed as **rbgs.io Debugger**, is an optional developer tool for investigating game APIs and compatibility. It is not required by players or by the companion's normal match workflow.
 
 ## Optional developer debugger installation
 
@@ -25,7 +27,7 @@ Tests use synthetic WoW APIs. The optional companion-parser integration requires
 
 ## Product addon
 
-Copy `RBGS/` into the beta client's `Interface/AddOns/`, restart WoW and enable **rbgs.io**. Developers may keep the separate debugger enabled; players do not need it. The product uses the original logo and separate per-character `RBGSSettings` for its minimap button.
+Copy `rbgs.io/` into the beta client's `Interface/AddOns/`, restart WoW and enable **rbgs.io**. Developers may keep the separate debugger enabled; players do not need it. The product uses the original logo and separate per-character `RBGSSettings` for its minimap button.
 
 The controlled `darkspear-scoreboard-v1` adapter captures Darkspear Islands (`2997`). It checks required game functions and bounded name, map, result and scoreboard data instead of rejecting a new build number. Actual game version, build and interface are saved with each capture. Missing optional statistics remain unknown; unreadable required data cannot produce a completed capture. Temporary TBC Anniversary WSG tests also record per-player flags captured and returned from the battleground objective columns when available; missing or unreadable objectives stay unknown. Historical captures are not backfilled. WoW's own addon-loading Interface metadata may still need updating after an interface change. Before entering the BG, paste the assignment command issued by the companion:
 
@@ -39,7 +41,7 @@ After the final result, remain in the BG until the recording is complete. During
 
 **Completed matches** or `/rbgs history` displays completed captures newest first. **Newer/Older** navigates map, UTC times, winning faction, roster and observed statistics. Unknown values stay unknown. Completed snapshots are frozen under their own ID/revision; history does not verify or erase them.
 
-WoW persists account-level `RBGSMatchData` to `WTF/Account/<account>/SavedVariables/RBGS.lua` on reload/logout. Product schema 2 is separate from diagnostic data; debugger **Clear history** cannot erase product captures. Storage holds eight attempts, at most 40 roster rows and a conservative 200,000-byte Lua estimate per attempt. Capacity exhaustion refuses new data without evicting previous captures. There is no product erase button or automatic pruning.
+WoW persists account-level `RBGSMatchData` to `WTF/Account/<account>/SavedVariables/rbgs.io.lua` on reload/logout. Product schema 2 is separate from diagnostic data; debugger **Clear history** cannot erase product captures. Storage holds eight attempts, at most 40 roster rows and a conservative 200,000-byte Lua estimate per attempt. Capacity exhaustion refuses new data without evicting previous captures. There is no product erase button or automatic pruning.
 
 The companion reads this separate product file and preserves observed revisions in its durable inbox. Assigned terminal captures are uploaded by the companion, not by the addon. Controlled reports go to review; no verified result, ownership or rating is established by capture alone.
 

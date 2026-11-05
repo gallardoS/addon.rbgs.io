@@ -1,6 +1,6 @@
 ## Interface: 20506
 ## Title: rbgs.io
-## IconTexture: Interface\AddOns\RBGS\Media\logo
+## IconTexture: Interface\AddOns\rbgs.io\Media\logo
 ## Notes: Temporary TBC Anniversary WSG capture tests only. rbgs.io is for WoW: Forever.
 ## Author: rbgs.io
 ## Version: 0.2.0-test

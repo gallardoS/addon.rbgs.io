@@ -8,7 +8,7 @@ jobs:
       - name: Install Lua 5.1 parser
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Parse all addon Lua files
-        run: find RBGS RBGSCompatibility -name '*.lua' -exec luac5.1 -p {} \;
+        run: find rbgs.io RBGSCompatibility -name '*.lua' -exec luac5.1 -p {} \;
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
