@@ -18,8 +18,4 @@ The addon for [rbgs.io](https://rbgs.io) on WoW: Forever.
 
 4. Start WoW and enable **rbgs.io** in the AddOns list.
 
-If you previously installed a folder named `RBGS`, remove that old addon folder first.
-
 Open the addon in game with `/rbgs`. Keep the rbgs.io companion running to upload recorded results.
-
-Currently in testing. WSG support is still in development.
