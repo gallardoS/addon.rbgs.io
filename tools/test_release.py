@@ -14,7 +14,34 @@ import publish_curseforge as cf
 
 class ReleaseTests(unittest.TestCase):
     def env(self, attempt='1'):
-        return {'GITHUB_RUN_NUMBER': '73', 'GITHUB_RUN_ATTEMPT': attempt, 'GITHUB_SHA': 'a' * 40}
+        return {'GITHUB_RUN_NUMBER': '73', 'GITHUB_RUN_ATTEMPT': attempt, 'GITHUB_SHA': 'a' * 40,
+                'GITHUB_REF': 'refs/heads/main'}
+
+    def test_stable_tag_sets_exact_zip_and_capture_version_and_release_upload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.env(); env['GITHUB_REF'] = 'refs/tags/v0.3.0'
+            release = prepare_release.prepare(env, directory)
+            self.assertEqual(release['archive'], 'rbgs.io-0.3.0-forever.zip')
+            self.assertEqual(release['metadata']['releaseType'], 'release')
+            with ZipFile(Path(directory) / release['archive']) as z:
+                self.assertIn('## Version: 0.3.0\n', z.read('rbgs.io/rbgs.io.toc').decode())
+                self.assertIn('addonVersion="0.3.0"', z.read('rbgs.io/ForeverAdapter.lua').decode())
+            versions = [{'id': 100, 'name': '1.60.1', 'gameVersionTypeID': 88568}]
+            with patch.object(cf, 'request_json', side_effect=[versions, {'id': 124}]) as api:
+                self.assertEqual(cf.publish(directory, 'fixture-token'), 124)
+            args = api.call_args_list[1].args
+            message = BytesParser().parsebytes(('Content-Type: ' + args[3] + '\r\n\r\n').encode() + args[2])
+            metadata = json.loads(message.get_payload()[0].get_payload(decode=True))
+            self.assertEqual(metadata['releaseType'], 'release')
+            self.assertEqual(metadata['displayName'], 'rbgs.io 0.3.0 — Forever')
+
+    def test_invalid_or_prerelease_tags_cannot_create_stable_packages(self):
+        for tag in ['v0.3.0-beta.1', 'v0.3', 'v01.2.3', 'vlatest', '0.3.0', 'v0.3.0+build']:
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as directory:
+                env = self.env(); env['GITHUB_REF'] = 'refs/tags/' + tag
+                with self.assertRaisesRegex(ValueError, 'Stable tags'):
+                    prepare_release.prepare(env, directory)
+                self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_ci_zip_stamps_both_versions_excludes_debugger_and_leaves_source_unchanged(self):
         source = package_forever.ROOT / 'rbgs.io'

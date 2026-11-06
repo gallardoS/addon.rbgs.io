@@ -1,6 +1,6 @@
 # addon.rbgs.io
 
-Automatic Forever Alpha publication: see [RELEASING.md](RELEASING.md) for the GitHub Action, versioning, ZIP contents and one-time `CF_API_KEY` secret setup.
+Automatic Forever publication: main builds publish Alphas and version tags publish stable Releases. See [RELEASING.md](RELEASING.md) for the GitHub Action, versioning, ZIP contents and one-time `CF_API_KEY` secret setup.
 
 Product directory rename (2026-11-05): install `rbgs.io/`, with `rbgs.io.toc` for Forever and `rbgs.io_TBC.toc` for the temporary TBC tests. WoW now saves product data to `SavedVariables/rbgs.io.lua`. Lua globals `RBGSMatchData`/`RBGSSettings`, `/rbgs`, and the schema stay unchanged. Remove the previous `RBGS/` installation when switching so both addons cannot load together, then fully restart WoW. Existing `RBGS.lua` data is not automatically migrated; this installation intentionally starts fresh. The updated companion supports both layouts and uses only `rbgs.io.lua` when the new addon folder is present.
 

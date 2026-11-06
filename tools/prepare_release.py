@@ -16,12 +16,19 @@ def prepare(env=os.environ, output=None):
     run, attempt = env.get('GITHUB_RUN_NUMBER', ''), env.get('GITHUB_RUN_ATTEMPT', '')
     if not re.fullmatch(r'[1-9]\d*', run) or not re.fullmatch(r'[1-9]\d*', attempt):
         raise ValueError('Positive GITHUB_RUN_NUMBER and GITHUB_RUN_ATTEMPT are required')
-    version = f'{base[1]}-alpha.{run}.{attempt}'
-    output = Path(output) if output else ROOT / 'releases'
-    archive = package(version, output / f'rbgs.io-{version}-forever.zip')
+    ref = env.get('GITHUB_REF', '')
+    if ref.startswith('refs/tags/'):
+        tag = re.fullmatch(r'refs/tags/v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))', ref)
+        if not tag:
+            raise ValueError('Stable tags must have the form vMAJOR.MINOR.PATCH, without prerelease suffixes')
+        version, release_type = tag[1], 'release'
+    else:
+        version, release_type = f'{base[1]}-alpha.{run}.{attempt}', 'alpha'
     sha = env.get('GITHUB_SHA', '')
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('A full GITHUB_SHA is required for release provenance')
+    output = Path(output) if output else ROOT / 'releases'
+    archive = package(version, output / f'rbgs.io-{version}-forever.zip')
     # Use the native game's version declared in the adapter's release target,
     # never Classic/TBC just because this project already has TBC files.
     game_version = '1.60.1'
@@ -32,14 +39,14 @@ def prepare(env=os.environ, output=None):
         'projectId': int(project[1]), 'archive': archive.name,
         'gameVersion': game_version, 'gameVersionTypeId': 88568,
         'metadata': {'displayName': f'rbgs.io {version} — Forever',
-                     'releaseType': 'alpha', 'changelogType': 'markdown',
+                     'releaseType': release_type, 'changelogType': 'markdown',
                      'changelog': changelog},
     }
     (output / 'release.json').write_text(json.dumps(release, indent=2) + '\n', encoding='utf-8')
     summary = env.get('GITHUB_STEP_SUMMARY')
     if summary:
         with open(summary, 'a', encoding='utf-8') as stream:
-            stream.write(f'Built **{version}** for Forever {game_version}.\n\nZIP: `{archive.name}`\n')
+            stream.write(f'Built **{version}** ({release_type}) for Forever {game_version}.\n\nZIP: `{archive.name}`\n')
     return release
 
 

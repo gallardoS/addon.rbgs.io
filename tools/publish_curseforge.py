@@ -1,4 +1,4 @@
-"""Upload a prepared Forever Alpha through CurseForge's author Upload API."""
+"""Upload a prepared Forever Alpha or Release through the author Upload API."""
 import argparse
 import json
 import os
@@ -56,8 +56,8 @@ def publish(release_dir, token):
     name = release['archive']
     if Path(name).name != name or not name.endswith('-forever.zip'):
         raise ValueError('Invalid Forever archive name')
-    if release['gameVersionTypeId'] != 88568 or release['metadata']['releaseType'] != 'alpha':
-        raise ValueError('Only Forever Alpha publication is enabled')
+    if release['gameVersionTypeId'] != 88568 or release['metadata']['releaseType'] not in ('alpha', 'release'):
+        raise ValueError('Only Forever Alpha or Release publication is enabled')
     project_id = release['projectId']
     if type(project_id) is not int or project_id <= 0:
         raise ValueError('Invalid CurseForge project ID')
