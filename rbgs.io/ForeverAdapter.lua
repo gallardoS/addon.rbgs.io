@@ -51,7 +51,7 @@ function Adapter.Client()
         return nil, "Cannot identify the TBC test client. Match recording is unavailable."
     end
     if not anniversary and not version:match("^1%.") then return nil, "This client is not supported for match recording." end
-    return {addonVersion="0.2.0-test", adapterVersion=anniversary and "tbc-anniversary-wsg-test-v1" or "darkspear-scoreboard-v1", product=anniversary and "wow_anniversary" or "wow_classic_beta",
+    return {addonVersion="0.2.1-alpha.1", adapterVersion=anniversary and "tbc-anniversary-wsg-test-v1" or "darkspear-scoreboard-v1", product=anniversary and "wow_anniversary" or "wow_classic_beta",
         gameVersion=version, gameBuild=revision, interface=interface}
 end
 function Adapter.Identity()

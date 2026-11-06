@@ -3,7 +3,8 @@
 ## IconTexture: Interface\AddOns\rbgs.io\Media\logo
 ## Notes: Records Darkspear test matches. Check uploads in the companion. Tests do not change your rating.
 ## Author: rbgs.io
-## Version: 0.2.0-test
+## Version: 0.2.1-alpha.1
+## X-Curse-Project-ID: 1783290
 ## SavedVariables: RBGSMatchData
 ## SavedVariablesPerCharacter: RBGSSettings
 

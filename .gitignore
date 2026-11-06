@@ -3,3 +3,4 @@ __pycache__/
 .env
 /LOCAL.md
 /.staging-review/
+/releases/
