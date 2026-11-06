@@ -156,6 +156,118 @@ class ProbePanelTests(unittest.TestCase):
             loader((root / file).read_text(encoding="utf-8"), self.namespace)
         self.lua.execute('fire("ADDON_LOADED", "RBGSCompatibility"); fire("PLAYER_LOGIN")')
 
+    def test_live_probe_preserves_level_api_types_and_raw_objectives(self):
+        self.lua.execute('''
+            function UnitLevel() return 19 end
+            function UnitFactionGroup() return "Horde", "Horde" end
+            WOW_PROJECT_ID=42
+            function GetNumBattlefieldStats() return 2 end
+            function GetBattlefieldStatInfo(i) return i == 1 and "Captured" or "Returned" end
+            function GetBattlefieldStatData(row, column) if column == 1 then return 0 end end
+            FixtureScoreCount=1
+        ''')
+        self.namespace.CaptureSnapshot("Live WSG inspection")
+        latest, _ = self.namespace.LatestRecords()
+        self.assertEqual(latest.identity.payload.level[1], "19")
+        self.assertEqual(latest.identity.payload.faction[1], "Horde")
+        self.assertEqual(latest.environment.payload.projectId, "42")
+        score = latest.scoreboard.payload
+        self.assertEqual(score.rows[1]["values"].types[2], "number")
+        self.assertEqual(score.rows[1]["values"].types[3], "nil")
+        self.assertEqual(score.columns[1]["values"][1], "Captured")
+        self.assertEqual(score.rows[1].objectives[1]["values"][1], "0")
+        self.assertEqual(score.rows[1].objectives[2]["values"].count, 0)
+        self.assertIsNone(self.lua.globals().FixtureReloaded)
+
+    def test_live_probe_objectives_are_optional_bounded_and_do_not_infer_stats(self):
+        for count in ("nil", "-1", "1.5", "100000", '"bad"'):
+            with self.subTest(count=count):
+                self.lua.execute('FixtureScoreCount=1; function GetNumBattlefieldStats() return ' + count + ' end')
+                self.namespace.CaptureSnapshot("Manual")
+                score = self.namespace.LatestRecords()[0].scoreboard.payload
+                self.assertEqual(len(score.columns), 0)
+                self.assertEqual(len(score.rows[1].objectives), 0)
+                self.assertIsNone(score.rows[1].flagsCaptured)
+        self.lua.execute('''function GetNumBattlefieldStats() return 1 end
+            function GetBattlefieldStatData() error("fixture unavailable") end''')
+        self.namespace.CaptureSnapshot("Manual")
+        objective = self.namespace.LatestRecords()[0].scoreboard.payload.rows[1].objectives[1]
+        self.assertIsNone(objective["values"])
+        self.assertIn("fixture unavailable", objective.error)
+
+    def test_live_score_notifications_capture_bounded_updates_and_final_without_end_event(self):
+        self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); FixtureScoreCount=1; fire("UPDATE_BATTLEFIELD_SCORE")')
+        latest, count = self.namespace.LatestRecords()
+        self.assertEqual(latest.capture_marker.payload.phase, "Automatic scoreboard update")
+        self.lua.execute('for i=1,500 do fire("UPDATE_BATTLEFIELD_SCORE") end; tick(29); fire("UPDATE_BATTLEFIELD_SCORE")')
+        self.assertEqual(self.namespace.LatestRecords()[1], count)
+        self.lua.execute('tick(1); fire("UPDATE_BATTLEFIELD_SCORE")')
+        self.assertEqual(self.namespace.LatestRecords()[1], count + 5)
+        self.lua.execute('FixtureWinner=0; fire("UPDATE_BATTLEFIELD_SCORE")')
+        latest, final_count = self.namespace.LatestRecords()
+        self.assertEqual(latest.capture_marker.payload.phase, "Automatic final result")
+        self.assertEqual(latest.scoreboard.payload.winner[1], "0")
+        self.lua.execute('tick(600); fire("UPDATE_BATTLEFIELD_SCORE")')
+        self.assertEqual(self.namespace.LatestRecords()[1], final_count)
+
+    def test_forever_named_objectives_do_not_require_legacy_column_apis(self):
+        self.lua.execute('''
+            FixtureScoreCount=2; FixtureWinner=0
+            C_PvP={
+                GetMatchPVPStatColumns=function() return {
+                    {pvpStatID=902,orderIndex=2,name="Flags Returned"},
+                    {pvpStatID=901,orderIndex=1,name="Flags Captured"}} end,
+                GetScoreInfo=function(index) return {name="Player"..index,faction=index-1,stats={
+                    {pvpStatID=901,pvpStatValue=index == 1 and 3 or 1,orderIndex=1,name="Flags Captured"},
+                    {pvpStatID=902,pvpStatValue=0,orderIndex=2,name="Flags Returned"}}} end}
+        ''')
+        self.namespace.CaptureSnapshot("Final result")
+        score = self.namespace.LatestRecords()[0].scoreboard.payload
+        self.assertEqual(score.statCountError, "missing")
+        self.assertEqual(score.pvpColumns.entries[1].pvpStatID, "902")
+        self.assertEqual(score.rows[1].pvpScore.stats.entries[1].pvpStatID, "901")
+        self.assertEqual(score.rows[1].pvpScore.stats.entries[1].pvpStatValue, "3")
+        self.assertEqual(score.rows[2].pvpScore.stats.entries[1].pvpStatValue, "1")
+        self.assertEqual(score.rows[1].pvpScore.stats.entries[2].pvpStatValue, "0")
+        self.assertEqual(score.rows[1].pvpScore.name[1], "Player1")
+        self.assertIn("Flags Captured", self.lua.globals().visibleText())
+        self.assertIn("PvP stat ID 901", self.lua.globals().visibleText())
+
+    def test_named_objectives_bound_rows_and_protected_values_stay_unknown(self):
+        self.lua.execute('''
+            FixtureScoreCount=1; FixtureWinner=0
+            function issecretvalue(value) return value == "protected-fixture" end
+            C_PvP={GetMatchPVPStatColumns=function() return {} end,
+                GetScoreInfo=function() local stats={}
+                    for i=1,12 do stats[i]={pvpStatID=i,pvpStatValue="protected-fixture",name="Objective"} end
+                    return {name="Player",faction=0,stats=stats} end}
+        ''')
+        self.namespace.CaptureSnapshot("Final result")
+        score = self.namespace.LatestRecords()[0].scoreboard.payload
+        stats = score.rows[1].pvpScore.stats
+        self.assertEqual(stats.count, 12)
+        self.assertEqual(len(stats.entries), 8)
+        self.assertEqual(stats.entries[1].pvpStatValue, "<nil or protected>")
+        self.assertNotIn("protected-fixture", self.lua.globals().visibleText())
+
+    def test_named_objective_errors_preserve_legacy_scoreboard_and_active_stats_are_not_read(self):
+        self.lua.execute('''FixtureScoreCount=1; C_PvP={GetScoreInfo=function() error("not readable") end,
+            GetMatchPVPStatColumns=function() error("no columns") end}''')
+        self.namespace.CaptureSnapshot("During BG")
+        score = self.namespace.LatestRecords()[0].scoreboard.payload
+        self.assertEqual(score.count, 1)
+        self.assertIsNone(score.rows[1].pvpScore)
+        self.assertIsNone(score.rows[1].pvpScoreError)
+        self.lua.execute('FixtureWinner=0')
+        self.namespace.CaptureSnapshot("Final result")
+        score = self.namespace.LatestRecords()[0].scoreboard.payload
+        self.assertEqual(score.rows[1]["values"][2], "4")
+        self.assertIn("not readable", score.rows[1].pvpScoreError)
+        self.assertIn("no columns", score.pvpColumnsError)
+        self.lua.execute('C_PvP.GetScoreInfo=function() return {stats=false} end')
+        self.namespace.CaptureSnapshot("Final result")
+        self.assertIn("statistics table unavailable", self.namespace.LatestRecords()[0].scoreboard.payload.rows[1].pvpScoreError)
+
     def test_panel_opens_at_login_and_launcher_reopens_it(self):
         launcher = self.lua.globals().RBGSProbeLauncher
         self.assertTrue(self.lua.eval('RBGSProbeLauncher.parent == Minimap'))
@@ -282,7 +394,9 @@ class ProbePanelTests(unittest.TestCase):
         self.assertEqual(self.lua.globals().FixtureRefreshes, 1)
 
     def test_capture_serializes_through_the_companion_parser_and_restores(self):
-        self.lua.execute('FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); FixtureScoreCount=1; FixtureWinner=0; fire("PVP_MATCH_COMPLETE")')
+        self.lua.execute('''C_PvP={GetMatchPVPStatColumns=function() return {{pvpStatID=901,name="Flags Captured"}} end,
+            GetScoreInfo=function() return {name="FixturePlayer",faction=0,stats={{pvpStatID=901,pvpStatValue=3,name="Flags Captured"}}} end}
+            FixtureInstanceType="pvp"; fire("PLAYER_ENTERING_WORLD"); FixtureScoreCount=1; FixtureWinner=0; fire("PVP_MATCH_COMPLETE")''')
 
         def encode(value):
             if isinstance(value, str):
@@ -303,6 +417,8 @@ class ProbePanelTests(unittest.TestCase):
         parsed = parser.parse(source)
         self.assertEqual(parsed["schema"], 1)
         self.assertEqual(parsed["records"][-1]["payload"]["phase"], "Automatic final result")
+        final = parsed["records"][-2]["payload"]
+        self.assertEqual(final["rows"][0]["pvpScore"]["stats"]["entries"][0]["pvpStatValue"], "3")
         self.lua.execute(source)
         self.lua.execute('fire("ADDON_LOADED", "RBGSCompatibility"); fire("PLAYER_LOGIN")')
         self.assertIn("Automatic final result", self.lua.globals().visibleText())

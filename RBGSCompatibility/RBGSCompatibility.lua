@@ -25,6 +25,7 @@ end
 
 local function printable(value)
     local ok, result = pcall(function()
+        if type(issecretvalue) == "function" and issecretvalue(value) then return nil end
         local kind = type(value)
         if kind == "string" or kind == "number" or kind == "boolean" then return tostring(value) end
     end)
@@ -40,10 +41,11 @@ end
 
 local function values(result, limit)
     if not result then return nil end
-    local output = {}
+    local output = { types = {} }
     output.count = result.count
     for index = 1, math.min(result.count, limit or 4) do
         output[index] = printable(result[index]) or "<nil or protected>"
+        output.types[index] = type(result[index])
     end
     return output
 end
@@ -92,6 +94,8 @@ local function readIdentity()
         identityProfile = "FOREVER_GIVEN_SURNAME_V1",
         guid = values(guid), guidError = guidError,
         realm = values(realm), realmError = realmError,
+        level = values(safeCall(UnitLevel, "player")),
+        faction = values(safeCall(UnitFactionGroup, "player")),
     }
 end
 
@@ -110,18 +114,82 @@ local function readRoster()
     return { reportedCount = count, unitPrefix = prefix, rows = rows }
 end
 
+-- Forever's native scoreboard joins named per-player stats to columns by ID,
+-- rather than the legacy GetNumBattlefieldStats / positional objective API.
+-- Keep the raw labels and IDs until a real final observation validates meanings.
+local function namedStats(list, fields)
+    if type(list) ~= "table" then error("PvP statistics table unavailable") end
+    local total = #list
+    local output = { count = total, entries = {} }
+    for index = 1, math.min(total, 8) do
+        local stat = list[index]
+        if type(stat) ~= "table" then error("PvP statistic entry unavailable") end
+        local entry = { types = {} }
+        for _, field in ipairs(fields) do
+            local value = stat[field]
+            local text = printable(value)
+            entry[field] = text and text:sub(1, 512) or "<nil or protected>"
+            entry.types[field] = type(value)
+        end
+        output.entries[index] = entry
+    end
+    return output
+end
+local function readPvpColumns()
+    local fn = type(C_PvP) == "table" and C_PvP.GetMatchPVPStatColumns
+    if type(fn) ~= "function" then return nil, "missing" end
+    local result, err = safeCall(function()
+        return namedStats(fn(), {"pvpStatID", "orderIndex", "name", "tooltipTitle"})
+    end)
+    return result and result[1], err
+end
+local function readPvpScore(index)
+    local fn = type(C_PvP) == "table" and C_PvP.GetScoreInfo
+    if type(fn) ~= "function" then return nil, "missing" end
+    local result, err = safeCall(function()
+        local info = fn(index)
+        if type(info) ~= "table" then error("PvP score info unavailable") end
+        return { name = values({count=1, info.name}), faction = values({count=1, info.faction}),
+            stats = namedStats(info.stats, {"pvpStatID", "pvpStatValue", "orderIndex", "name", "iconName"}) }
+    end)
+    return result and result[1], err
+end
 local function readScoreboard()
     local count, countError = safeCall(GetNumBattlefieldScores)
+    local winner, winnerError = safeCall(GetBattlefieldWinner)
+    local winnerValue = winner and printable(winner[1])
+    local final = winnerValue == "0" or winnerValue == "1"
+    local pvpColumns, pvpColumnsError = readPvpColumns()
+    local statCount, statCountError = safeCall(GetNumBattlefieldStats)
+    local reportedStats = safeNumber(statCount and statCount[1])
+    local statTotal = reportedStats and reportedStats >= 0 and reportedStats <= 8
+        and reportedStats == math.floor(reportedStats) and reportedStats or 0
+    local columns = {}
+    for column = 1, statTotal do
+        local result, columnError = safeCall(GetBattlefieldStatInfo, column)
+        columns[column] = { index = column, values = values(result, 8), error = columnError }
+    end
     local rows = {}
     local total = safeNumber(count and count[1]) or 0
     for index = 1, math.min(total, MAX_ROWS) do
         local result, rowError = safeCall(GetBattlefieldScore, index)
-        rows[#rows + 1] = { index = index, values = values(result, 24), error = rowError }
+        local objectives = {}
+        for column = 1, statTotal do
+            local objective, objectiveError = safeCall(GetBattlefieldStatData, index, column)
+            objectives[column] = { index = column, values = values(objective), error = objectiveError }
+        end
+        -- These statistics can be secret while playing. Read named player
+        -- statistics only at final, keeping periodic diagnostic storage small.
+        local pvpScore, pvpScoreError
+        if final then pvpScore, pvpScoreError = readPvpScore(index) end
+        rows[#rows + 1] = { index = index, values = values(result, 24), error = rowError, objectives = objectives,
+            pvpScore = pvpScore, pvpScoreError = pvpScoreError }
     end
-    local winner, winnerError = safeCall(GetBattlefieldWinner)
     return {
         count = total, countError = countError, rows = rows,
         winner = values(winner), winnerError = winnerError,
+        statCount = values(statCount), statCountError = statCountError, columns = columns,
+        pvpColumns = pvpColumns, pvpColumnsError = pvpColumnsError,
         note = "Return values are positional diagnostics; verify signatures against the tested build.",
     }
 end
@@ -129,7 +197,10 @@ end
 local function readEnvironment()
     local build, buildError = safeCall(GetBuildInfo)
     local map, mapError = safeCall(GetInstanceInfo)
-    return { build = values(build, 8), buildError = buildError, instance = values(map, 16), instanceError = mapError }
+    return { build = values(build, 8), buildError = buildError, instance = values(map, 16), instanceError = mapError,
+        projectId = printable(WOW_PROJECT_ID),
+        runtime = values(safeCall(GetBattlefieldInstanceRunTime)),
+        battlefieldStatus = values(safeCall(GetBattlefieldStatus, 1), 12) }
 end
 
 local function captureCapabilities()
@@ -138,11 +209,15 @@ local function captureCapabilities()
         "GetNumGroupMembers", "GetNumSubgroupMembers", "GetNumBattlefieldScores",
         "GetBattlefieldScore", "GetBattlefieldWinner", "GetInstanceInfo",
         "RequestBattlefieldScoreData", "CombatLogGetCurrentEventInfo",
+        "UnitLevel", "UnitFactionGroup", "GetNumBattlefieldStats", "GetBattlefieldStatInfo",
+        "GetBattlefieldStatData", "GetBattlefieldInstanceRunTime", "GetBattlefieldStatus",
     }
     local found = {}
     for _, name in ipairs(names) do found[name] = type(_G[name]) end
     found.C_PvP = type(C_PvP)
     found.C_PvP_RequestScoreData = type(C_PvP) == "table" and type(C_PvP.RequestScoreData) or "unavailable"
+    found.C_PvP_GetScoreInfo = type(C_PvP) == "table" and type(C_PvP.GetScoreInfo) or "unavailable"
+    found.C_PvP_GetMatchPVPStatColumns = type(C_PvP) == "table" and type(C_PvP.GetMatchPVPStatColumns) or "unavailable"
     append("capabilities", found)
 end
 
@@ -172,6 +247,7 @@ end
 
 local inBattleground, instanceKey, completed, finalPending = false, nil, false, false
 local periodicElapsed, finalElapsed, retryElapsed = 0, 0, 0
+local scoreElapsed, observedScores = 0, false
 
 local function resultAvailable(score)
     return not score.countError and not score.winnerError and score.count > 0
@@ -201,9 +277,11 @@ local function updateContext()
     if not isBG then
         inBattleground, instanceKey, completed, finalPending = false, nil, false, false
         periodicElapsed = 0
+        scoreElapsed, observedScores = 0, false
     elseif not inBattleground or key ~= instanceKey then
         inBattleground, instanceKey, completed, finalPending = true, key, false, false
         periodicElapsed = 0
+        scoreElapsed, observedScores = 0, false
         requestScores()
         probe.CaptureSnapshot("Automatic BG entry")
         local latest = probe.LatestRecords()
@@ -213,6 +291,7 @@ end
 
 frame:SetScript("OnUpdate", function(_, elapsed)
     if not inBattleground then return end
+    scoreElapsed = scoreElapsed + elapsed
     if finalPending then
         finalElapsed, retryElapsed = finalElapsed + elapsed, retryElapsed + elapsed
         if retryElapsed < FINAL_RETRY_INTERVAL and finalElapsed < FINAL_RETRY_WINDOW then return end
@@ -257,7 +336,17 @@ frame:SetScript("OnEvent", function(_, event, ...)
         updateContext()
         if probe.ShowPanel then probe.ShowPanel() end
     else
-        if event == "UPDATE_BATTLEFIELD_SCORE" or event == "GROUP_ROSTER_UPDATE"
+        if event == "UPDATE_BATTLEFIELD_SCORE" then
+            if not inBattleground or completed then return end
+            local score = readScoreboard()
+            if resultAvailable(score) then beginFinal()
+            elseif score.count > 0 and (not observedScores or scoreElapsed >= 30) then
+                observedScores, scoreElapsed = true, 0
+                probe.CaptureSnapshot("Automatic scoreboard update")
+            end
+            return
+        end
+        if event == "GROUP_ROSTER_UPDATE"
             or event == "UPDATE_BATTLEFIELD_STATUS" then return end
         if event == "PVP_MATCH_COMPLETE" or event == "PLAYER_PVP_MATCH_COMPLETE" then
             if inBattleground and not completed then
@@ -285,7 +374,7 @@ SLASH_RBGSPROBE1 = "/rbgsprobe"
 SlashCmdList.RBGSPROBE = function(command)
     command = (command or ""):lower():match("^%s*(.-)%s*$")
     if command == "status" then
-        emit("saved records: " .. tostring(RBGSCompatibilityData and #RBGSCompatibilityData.records or 0))
+        emit("live-probe 0.3.1; saved records: " .. tostring(RBGSCompatibilityData and #RBGSCompatibilityData.records or 0))
     elseif command == "capture" then
         probe.CaptureSnapshot("Manual")
     elseif command == "capabilities" then

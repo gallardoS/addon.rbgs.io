@@ -1,7 +1,8 @@
 ## Interface: 16001
 ## Title: rbgs.io Debugger
 ## IconTexture: Interface\AddOns\RBGSCompatibility\Media\logo
-## Notes: Diagnostic capture for the official Forever beta; verify Interface for each tested build.
+## Notes: Local Forever API and battleground diagnostics. No rating or upload.
+## Version: 0.3.1-live-probe
 ## SavedVariables: RBGSCompatibilityData
 ## SavedVariablesPerCharacter: RBGSDebuggerSettings
 

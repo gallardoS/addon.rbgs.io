@@ -71,7 +71,7 @@ logo:SetPoint("TOPLEFT", 22, -12)
 logo:SetTexture(LOGO)
 text(window, "GameFontNormalLarge", 76, -20, 420):SetText("rbgs.io Debugger")
 text(window, "GameFontHighlightSmall", 22, -62, 616, MUTED)
-    :SetText("Automatic BG entry, 5-minute and final captures. Save with a reload.")
+    :SetText("Automatic BG entry, scoreboard and final captures. Save with a reload.")
 button(window, "RBGSProbeClose", "X", 610, -17, 28, function() window:Hide() end)
 if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "RBGSProbePanel") end
 
@@ -238,6 +238,8 @@ probe.Refresh = function()
         .. ". In memory; use Save / reload to flush.") or "Waiting for a BG. Captures run automatically; reload remains manual.")
 
     local lines = { "Environment: " .. stamp(latest.environment) .. "   |   Scoreboard: " .. stamp(latest.scoreboard) }
+    lines[#lines + 1] = "Live probe 0.3.1  |  Level: " .. valueAt(identity.level, 1)
+        .. "  |  Faction: " .. valueAt(identity.faction, 1) .. "  |  Project: " .. clean(location.projectId)
     local restored = latest.session_restored and latest.session_restored.payload
     lines[#lines + 1] = "Records restored at load: " .. (restored and clean(restored.existingRecords) or "Unknown")
     local records = RBGSCompatibilityData and RBGSCompatibilityData.records or {}
@@ -258,12 +260,31 @@ probe.Refresh = function()
         if scoreboard.countError then lines[#lines + 1] = "Score count: " .. clean(scoreboard.countError) end
         if scoreboard.winnerError then lines[#lines + 1] = "Winner: " .. clean(scoreboard.winnerError) end
         lines[#lines + 1] = "Raw positional returns below. Field meanings and winner encoding are unverified."
+        for _, column in ipairs(scoreboard.columns or {}) do
+            lines[#lines + 1] = "Objective column " .. clean(column.index) .. ": " .. valueAt(column.values, 1)
+        end
+        for _, column in ipairs(scoreboard.pvpColumns and scoreboard.pvpColumns.entries or {}) do
+            lines[#lines + 1] = "PvP column ID " .. clean(column.pvpStatID) .. ": " .. clean(column.name)
+        end
         for _, row in ipairs(scoreboard.rows or {}) do
             local fields = {}
             for index = 1, math.min(row.values and row.values.count or 0, 24) do
                 fields[#fields + 1] = index .. "=" .. valueAt(row.values, index)
             end
             lines[#lines + 1] = "Row " .. clean(row.index) .. ": " .. (row.error and clean(row.error) or table.concat(fields, ", "))
+            for _, objective in ipairs(row.objectives or {}) do
+                lines[#lines + 1] = "  Objective " .. clean(objective.index) .. ": "
+                    .. (objective.error and clean(objective.error) or valueAt(objective.values, 1))
+            end
+            if row.pvpScore then
+                lines[#lines + 1] = "  Named PvP row: " .. valueAt(row.pvpScore.name, 1)
+                for _, stat in ipairs(row.pvpScore.stats.entries) do
+                    lines[#lines + 1] = "  PvP stat ID " .. clean(stat.pvpStatID) .. " (" .. clean(stat.name)
+                        .. "): " .. clean(stat.pvpStatValue)
+                end
+            elseif row.pvpScoreError then
+                lines[#lines + 1] = "  Named PvP stats: " .. clean(row.pvpScoreError)
+            end
         end
     else
         lines[#lines + 1] = "No scoreboard captured. Open the in-game scoreboard, let it load, then capture."
