@@ -84,7 +84,10 @@ frame:SetScript("OnEvent", function(_, event, name, isReloadingUI)
     elseif event == "PLAYER_LOGIN" then
         if not loaded then return end
         loggedIn = true
-        app.client, app.adapterError = Adapter.Client()
+        local active = app.store:Active()
+        local profile = active and active.client.product == "wow_forever" and "FOREVER_WSG_TEST"
+            or type(RBGSSettings) == "table" and RBGSSettings.recordingProfile
+        app.client, app.adapterError = Adapter.Client(profile)
         if app.adapterError and app.store:Active() then app.store:Fail("UNSUPPORTED_ADAPTER", Adapter.Time())
         else
             local active = app.store:Active()
@@ -185,7 +188,7 @@ local reasonLabels = {
 function app.Status()
     if not app.store then return "Waiting for the addon to load." end
     if app.store.error then return app.store.error end
-    local lines = {app.adapterError or app.eventError or Adapter.Problem() or (app.client and app.client.product == "wow_anniversary" and "Temporary TBC Anniversary WSG capture test. Results are unverified. rbgs.io is for Forever only." or "Darkspear test matches. Tests do not change your rating."),
+    local lines = {app.adapterError or app.eventError or Adapter.Problem() or (app.client and app.client.product == "wow_forever" and "Forever WSG capture test. Tests do not change your rating." or app.client and app.client.product == "wow_anniversary" and "Temporary TBC Anniversary WSG capture test. Results are unverified. rbgs.io is for Forever only." or "Darkspear test matches. Tests do not change your rating."),
         "Check upload status in the companion.", "Saved recordings: " .. #app.store.root.captures .. " / 8"}
     for _, record in ipairs(app.store.root.captures) do
         local c = record.capture
@@ -215,7 +218,7 @@ function app.ResultSaveState()
     if not currentCaptureId or not app.store or app.store.error then return false, false end
     local inBG, map = Adapter.Context()
     local winner, readable = Adapter.Winner()
-    local expectedMap = app.client and app.client.product == "wow_anniversary" and 489 or 2997
+    local expectedMap = app.client and (app.client.product == "wow_anniversary" or app.client.product == "wow_forever") and 489 or 2997
     if inBG ~= true or not map or map.gameMapId ~= expectedMap or not readable or (winner ~= 0 and winner ~= 1) then return false, false end
     for _, record in ipairs(app.store.root.captures) do
         if record.captureId == currentCaptureId then
@@ -282,14 +285,25 @@ SLASH_RBGS1 = "/rbgs"
 SlashCmdList.RBGS = function(command)
     local action, argument = (command or ""):match("^%s*(%S*)%s*(.-)%s*$")
     action = action:lower()
-    if action == "match" or action == "test-wsg" then
+    if action == "match" or action == "test-wsg" or action == "test-forever-wsg" then
         if not loggedIn or not app.store then app.Message("Wait for your character to log in before entering the match command."); return end
-        if app.adapterError or app.eventError then app.Message(app.adapterError or app.eventError); return end
-        if (action == "test-wsg") ~= (app.client and app.client.product == "wow_anniversary") then
-            app.Message("Copy the command for this client from the companion. TBC Anniversary accepts only explicit WSG test commands."); return
+        if app.eventError then app.Message(app.eventError); return end
+        if app.store:Active() then app.Message("A recording is already active. Finish it or use /rbgs cancel."); return end
+        local requested = action == "test-forever-wsg" and "FOREVER_WSG_TEST" or nil
+        local client, error = Adapter.Client(requested)
+        if not client then app.Message(error); return end
+        if (action == "test-wsg") ~= (client.product == "wow_anniversary") then
+            app.Message("Copy the command for this client from the companion."); return
         end
+        local previous = app.client
+        app.client = client
         updateContext()
-        local _, message = app.store:Arm(argument, Adapter.Identity(), app.client, Adapter.Context())
+        local armed, message = app.store:Arm(argument, Adapter.Identity(), client, Adapter.Context())
+        if armed then
+            app.adapterError = nil
+            if type(RBGSSettings) ~= "table" then RBGSSettings = {} end
+            RBGSSettings.recordingProfile = requested
+        else app.client = previous end
         app.Message(message); refresh()
     elseif action == "status" then
         app.Message(app.Status())
@@ -301,5 +315,5 @@ SlashCmdList.RBGS = function(command)
     elseif action == "reload" then app.Reload()
     elseif action == "history" then if app.ShowHistory then app.ShowHistory() end
     elseif action == "" or action == "show" then if app.ShowPanel then app.ShowPanel() end
-    else app.Message("Commands: match <token>, test-wsg <token>, status, history, show, cancel, reload. Saved match data cannot be deleted here.") end
+    else app.Message("Commands: match <token>, test-wsg <token>, test-forever-wsg <token>, status, history, show, cancel, reload. Saved match data cannot be deleted here.") end
 end

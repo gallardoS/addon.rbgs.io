@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2-alpha.1 — Forever WSG capture tests
+
+- Adds an explicit Forever WSG test command issued by the updated companion: `/rbgs test-forever-wsg RB2:<captureId>:<assignmentCode>`.
+- Records the final WSG scoreboard, including per-player flag captures and returns when readable and matched to the same player.
+- Keeps WSG tests separate from historical Darkspear and TBC captures. Missing optional values stay unknown.
+- Supports Save results/reload/reopen and the existing conservative same-game reload recovery.
+- Requires the updated web/API and companion. Moderator can select an owned Forever character at its current level for an individual capture-only test.
+
+Local checks replay the anonymized real WSG scoreboard and validate the delivery/receipt flow. A new live product test is still required. These tests do not affect ratings or enable ranked matchmaking.
+
 ## 0.2.1-alpha.1 — Forever
 
 - The player addon now installs into `Interface/AddOns/rbgs.io`, with matching TOC and texture paths.

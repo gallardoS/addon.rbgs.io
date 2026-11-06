@@ -106,6 +106,106 @@ class ProductCaptureTests(unittest.TestCase):
     def finish(self, winner=1):
         self.lua.execute(f'fire("PVP_MATCH_COMPLETE"); FixtureWinner={winner}; FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE")')
 
+    def forever_wsg(self):
+        self.lua.execute('WOW_PROJECT_ID=18; FixtureBuild="70790"; FixtureMapId=489; FixtureMapName="Warsong Gulch"')
+        self.command("test-forever-wsg " + TOKEN)
+
+    def test_forever_wsg_explicit_command_and_profile_are_not_darkspear_or_tbc(self):
+        self.command("test-forever-wsg " + TOKEN)
+        self.assertEqual(self.saved()["captures"], {})
+        self.forever_wsg(); self.enter(); self.finish(0)
+        record = self.last()
+        self.assertEqual(record["client"]["product"], "wow_forever")
+        self.assertEqual(record["client"]["adapterVersion"], "forever-wsg-v1")
+        self.assertEqual(record["capture"]["map"]["profile"], "FOREVER_WSG_TEST")
+        self.assertEqual(record["capture"]["stage"], "COMPLETE")
+        self.assertNotIn("flagsCaptured", record["capture"]["roster"][0])
+        saved = self.saved()
+        self.boot(saved, setup='WOW_PROJECT_ID=18; FixtureBuild="70790"; FixtureMapId=489')
+        self.assertEqual(self.saved(), saved)
+
+    def test_forever_wsg_flags_match_real_final_rows_and_save_reload_reopens_scoreboard(self):
+        probe = json.loads((ROOT / "tools/fixtures/forever-wsg-70790-flags.sanitized.json").read_text())
+        identity = probe['records'][1]['payload']['name']
+        rows = probe['records'][2]['payload']['rows']
+        tuples, modern = [], []
+        for row in rows:
+            raw = row['values']
+            fields = []
+            for i in range(1, raw['count'] + 1):
+                value = raw.get(str(i))
+                kind = raw['types'][i - 1]
+                fields.append(int(value) if kind == 'number' else None if kind == 'nil' else value)
+            tuples.append(tuple(fields))
+            info = row['pvpScore']
+            modern.append({'name': info['name']['1'], 'faction': int(info['faction']['1']),
+                           'stats': [{'pvpStatID': int(s['pvpStatID']), 'pvpStatValue': int(s['pvpStatValue'])}
+                                     for s in reversed(info['stats']['entries'])]})
+        def table(value):
+            if isinstance(value, list): return self.lua.table_from([table(v) for v in value])
+            if isinstance(value, dict): return self.lua.table_from({k: table(v) for k, v in value.items()})
+            return value
+        self.lua.globals().FixtureModernScores = table(modern)
+        self.lua.globals().fixtureScore = lambda i: tuples[int(i) - 1]
+        self.lua.globals().FixtureCharacter = identity['1']
+        self.lua.globals().FixtureSurname = identity['2']
+        self.lua.execute('''function GetBattlefieldScore(i) return fixtureScore(i) end
+            C_PvP={GetScoreInfo=function(i) return FixtureModernScores[i] end}''')
+        self.forever_wsg(); self.enter(); self.scoreboard()
+        self.lua.execute(f'fire("PVP_MATCH_COMPLETE"); FixtureWinner=0; FixtureScoreCount={len(rows)}; fire("UPDATE_BATTLEFIELD_SCORE"); tick(0.5)')
+        capture = self.last()['capture']
+        self.assertEqual(capture['stage'], 'COMPLETE')
+        self.assertEqual(len(capture['roster']), 19)
+        self.assertEqual(sorted(r['flagsCaptured'] for r in capture['roster'] if r['flagsCaptured']), [1, 2])
+        self.assertEqual(sum(r['flagsReturned'] for r in capture['roster']), 0)
+        saved = self.saved()
+        self.lua.execute('click(RBGSScoreboardSaveResults)')
+        self.assertTrue(self.lua.globals().FixtureReloaded)
+        settings = data(self.lua.globals().RBGSSettings)
+        self.boot(saved, settings, setup='WOW_PROJECT_ID=18; FixtureBuild="70790"; FixtureMapId=489; FixtureCharacter='
+                  + json.dumps(identity['1']) + '; FixtureSurname=' + json.dumps(identity['2']))
+        self.scoreboard()
+        self.lua.execute('PVPMatchResults:Hide(); FixtureInstanceType="pvp"; FixtureWinner=0; FixtureScoreCount=2; fire("PLAYER_ENTERING_WORLD",false,true); tick(0.5)')
+        self.assertTrue(self.lua.globals().PVPMatchResults.shown)
+        self.assertTrue(self.lua.globals().FixtureLeaveMatch.shown)
+        self.assertEqual(self.saved(), saved)
+
+    def test_forever_flags_reject_wrong_rows_duplicates_and_malformed_optional_stats(self):
+        self.forever_wsg()
+        for stats in ('{{pvpStatID=42,pvpStatValue=0},{pvpStatID=44,pvpStatValue=2}}',
+                      '{{pvpStatID=42,pvpStatValue=-1}}', '{{pvpStatID=42,pvpStatValue=1},{pvpStatID=42,pvpStatValue=2}}'):
+            self.lua.execute('C_PvP={GetScoreInfo=function() return {name="Name",faction=0,stats=' + stats + '} end}')
+            captured, returned = self.app.Adapter.ForeverFlags(1, "Name", 0)
+            if '-1' in stats or stats.count('pvpStatID=42') > 1:
+                self.assertIsNone(captured)
+            else:
+                self.assertEqual((captured, returned), (0, 2))
+            self.assertEqual(self.app.Adapter.ForeverFlags(1, "Wrong row", 0), (None, None))
+            self.assertEqual(self.app.Adapter.ForeverFlags(1, "Name", 1), (None, None))
+
+    def test_forever_wsg_cannot_replace_an_active_profile_or_record_wrong_map(self):
+        self.forever_wsg()
+        saved = self.saved()
+        self.arm(TOKEN2)
+        self.assertEqual(self.saved(), saved)
+        self.lua.execute('FixtureMapId=2997')
+        self.enter()
+        self.assertEqual(self.last()['capture']['incompleteReason'], 'MAP_MISMATCH')
+
+    def test_forever_wsg_reload_resumes_its_frozen_profile(self):
+        self.boot(setup='WOW_PROJECT_ID=18; FixtureBuild="70790"; FixtureMapId=489; FixtureRuntime=60000; FixtureInstanceId=17; '
+                  'function GetBattlefieldInstanceRunTime() return FixtureRuntime end; '
+                  'function GetBattlefieldStatus() return "active", "Warsong Gulch", FixtureInstanceId end')
+        self.forever_wsg(); self.enter()
+        self.lua.execute('FixtureScoreCount=2; fire("UPDATE_BATTLEFIELD_SCORE"); fire("PLAYER_LOGOUT")')
+        saved, settings = self.saved(), data(self.lua.globals().RBGSSettings)
+        self.resume_fixture(saved, settings, 'WOW_PROJECT_ID=18; FixtureBuild="70790"; FixtureMapId=489; FixtureMapName="Warsong Gulch"')
+        self.assertEqual(self.last()['capture']['continuity'], 'RESUMED')
+        self.assertEqual(self.last()['client'], saved['captures'][0]['client'])
+        self.finish(0)
+        self.assertEqual(self.last()['capture']['stage'], 'COMPLETE')
+        self.assertEqual(self.last()['capture']['map']['profile'], 'FOREVER_WSG_TEST')
+
     def test_arm_validates_bounded_token_and_does_not_log_secret(self):
         for token in ("", TOKEN + "x", TOKEN.replace("RB2", "rb2"), TOKEN.replace("ABCDEF", "ABCDEI"), "return os.execute('bad')"):
             self.arm(token)

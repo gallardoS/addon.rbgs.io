@@ -37,7 +37,7 @@ local function optionalTeam(value)
     local ok, valid = pcall(function() return value == nil or value == 0 or value == 1 end)
     return ok and valid
 end
-function Adapter.Client()
+function Adapter.Client(requestedProfile)
     local build = Adapter.Call(GetBuildInfo)
     local version, revision, interface = build and stringValue(build[1]), build and stringValue(build[2]), build and numberValue(build[4])
     if not Store.GameVersion(version) or not Store.GameBuild(revision) or not interface or interface == 0 then
@@ -51,7 +51,11 @@ function Adapter.Client()
         return nil, "Cannot identify the TBC test client. Match recording is unavailable."
     end
     if not anniversary and not version:match("^1%.") then return nil, "This client is not supported for match recording." end
-    return {addonVersion="0.2.1-alpha.1", adapterVersion=anniversary and "tbc-anniversary-wsg-test-v1" or "darkspear-scoreboard-v1", product=anniversary and "wow_anniversary" or "wow_classic_beta",
+    local forever = requestedProfile == "FOREVER_WSG_TEST"
+    if forever and (anniversary or WOW_PROJECT_ID ~= 18) then
+        return nil, "Use the Forever client for this WSG test command."
+    end
+    return {addonVersion="0.2.2-alpha.1", adapterVersion=forever and "forever-wsg-v1" or anniversary and "tbc-anniversary-wsg-test-v1" or "darkspear-scoreboard-v1", product=forever and "wow_forever" or anniversary and "wow_anniversary" or "wow_classic_beta",
         gameVersion=version, gameBuild=revision, interface=interface}
 end
 function Adapter.Identity()
@@ -86,7 +90,7 @@ function Adapter.Context()
     if not stringValue(values[1]) or not numberValue(values[8]) then
         return unreadable("context", "Cannot read the battleground name or map ID.")
     end
-    return true, {profile=app.client and app.client.product == "wow_anniversary" and "TBC_ANNIVERSARY_WSG_TEST" or "DARKSPEAR_DIAGNOSTIC", observedName=stringValue(values[1]), gameMapId=numberValue(values[8])}
+    return true, {profile=app.client and app.client.product == "wow_forever" and "FOREVER_WSG_TEST" or app.client and app.client.product == "wow_anniversary" and "TBC_ANNIVERSARY_WSG_TEST" or "DARKSPEAR_DIAGNOSTIC", observedName=stringValue(values[1]), gameMapId=numberValue(values[8])}
 end
 function Adapter.Time()
     local stamp = Adapter.Call(GetServerTime)
@@ -104,6 +108,30 @@ function Adapter.Winner()
     problems.winner = nil
     return winner[1], true
 end
+-- Final live WSG observations validate IDs 42/44. Match the named API row
+-- to the legacy row before copying optional counters; order is never identity.
+function Adapter.ForeverFlags(index, name, team)
+    local result = Adapter.Call(function()
+        if not C_PvP or type(C_PvP.GetScoreInfo) ~= "function" then return end
+        local info = C_PvP.GetScoreInfo(index)
+        if type(info) ~= "table" or stringValue(info.name) ~= name
+            or team == nil or numberValue(info.faction) ~= team or type(info.stats) ~= "table" or #info.stats > 8 then return end
+        local captured, returned, seen = nil, nil, {}
+        for _, stat in ipairs(info.stats) do
+            if type(stat) ~= "table" then return end
+            local id = numberValue(stat.pvpStatID)
+            if id == 42 or id == 44 then
+                if seen[id] then return end
+                seen[id] = true
+                if id == 42 then captured = numberValue(stat.pvpStatValue)
+                else returned = numberValue(stat.pvpStatValue) end
+            end
+        end
+        return captured, returned
+    end)
+    return result and result[1], result and result[2]
+end
+
 function Adapter.Roster()
     local count = Adapter.Call(GetNumBattlefieldScores)
     local total = count and numberValue(count[1])
@@ -135,6 +163,12 @@ function Adapter.Roster()
             observedTeamKey=(team == 0 or team == 1) and tostring(team) or nil,
             killingBlows=numberValue(values[2]), honorableKills=numberValue(values[3]), deaths=numberValue(values[4]),
             damage=numberValue(values[damagePosition]), healing=numberValue(values[healingPosition])}
+        if app.client and app.client.product == "wow_forever" and inBG == true and map.gameMapId == 489 then
+            local winner = Adapter.Winner()
+            if winner == 0 or winner == 1 then
+                rows[index].flagsCaptured, rows[index].flagsReturned = Adapter.ForeverFlags(index, name, team)
+            end
+        end
         -- WSG's objective columns are captures then returns. These APIs are
         -- optional; unreadable values stay absent without discarding the row.
         if readFlags then

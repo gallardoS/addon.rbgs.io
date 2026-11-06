@@ -121,6 +121,7 @@ local reasons = { CAPTURE_PENDING=true, MAP_MISMATCH=true, CHARACTER_CHANGED=tru
     UNSUPPORTED_ADAPTER=true, STORAGE_FULL=true, CANCELLED=true }
 local pending = { ARMED=true, RECORDING=true, FINAL_PENDING=true }
 local function profile(client)
+    if client.product == "wow_forever" and client.adapterVersion == "forever-wsg-v1" then return "FOREVER_WSG_TEST", 489 end
     if client.product == "wow_classic_beta" then return "DARKSPEAR_DIAGNOSTIC", 2997 end
     if client.product == "wow_anniversary" and client.adapterVersion == "tbc-anniversary-wsg-test-v1" then return "TBC_ANNIVERSARY_WSG_TEST", 489 end
 end
@@ -227,7 +228,7 @@ function Store:Arm(token, character, client, inBG)
         capture={state="INCOMPLETE", stage="ARMED", continuity="CONTINUOUS", incompleteReason="CAPTURE_PENDING", roster={}, outcome={kind="UNKNOWN"}}}
     if not Store.Size(record) or not Store.Valid(record) then return false, "Cannot read the character or game details needed to record this match." end
     self.root.captures[#self.root.captures + 1] = record
-    return true, "Ready to record your next " .. (client.product == "wow_anniversary" and "WSG" or "Darkspear") .. " test match. Enter the battleground. Reload recovery requires the same match and a readable battleground clock."
+    return true, "Ready to record your next " .. ((client.product == "wow_anniversary" or client.product == "wow_forever") and "WSG" or "Darkspear") .. " test match. Enter the battleground. Reload recovery requires the same match and a readable battleground clock."
 end
 function Store:Fail(reason, at, continuity)
     local record, index = self:Active()

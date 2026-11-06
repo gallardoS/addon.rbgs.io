@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: rbgs.io
 ## IconTexture: Interface\AddOns\rbgs.io\Media\logo
-## Notes: Records Darkspear test matches. Check uploads in the companion. Tests do not change your rating.
+## Notes: Records Forever WSG and Darkspear test matches. Check uploads in the companion. Tests do not change your rating.
 ## Author: rbgs.io
-## Version: 0.2.1-alpha.1
+## Version: 0.2.2-alpha.1
 ## X-Curse-Project-ID: 1783290
 ## SavedVariables: RBGSMatchData
 ## SavedVariablesPerCharacter: RBGSSettings
