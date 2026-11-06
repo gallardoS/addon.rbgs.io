@@ -1,4 +1,4 @@
-<h1><img src="branding/curseforge-icon.png" alt="" width="48" height="48" align="absmiddle"> rbgs.io</h1>
+<p align="center"><img src="branding/curseforge-icon.png" alt="" width="48" height="48" align="absmiddle"> <strong>rbgs.io</strong></p>
 
 The addon for [rbgs.io](https://rbgs.io) on WoW: Forever.
 
